@@ -1,0 +1,11 @@
+#!/bin/bash
+# PaperFlow UI - Voice-powered academic paper assistant
+# Get the actual directory where this script resides (following symlinks)
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+    DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+cd "$DIR/.." && exec node --import tsx src/index.tsx "$@"

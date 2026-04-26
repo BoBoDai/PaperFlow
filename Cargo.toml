@@ -3,7 +3,7 @@ name = "paperflow"
 version = "0.1.0"
 edition = "2024"
 authors = ["PaperFlow Team"]
-description = "全天候语音学术助理"
+description = "全天候语音学术助理 - API Server"
 
 [dependencies]
 # Async runtime
@@ -11,16 +11,12 @@ tokio = { version = "1", features = ["full"] }
 
 # Web / HTTP
 reqwest = { version = "0.12", features = ["json", "multipart"] }
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors"] }
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
-
-# CLI
-clap = { version = "4", features = ["derive"] }
-
-# TUI
-ratatui = "0.28"
-crossterm = "0.28"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -37,16 +33,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Utils
 chrono = { version = "0.4", features = ["serde"] }
 directories = "6"
-tokio-cron-scheduler = "0.14"
-
-# Audio
-hound = "3.5"
 
 # Async traits
 async-trait = "0.1"
-
-# TOML parsing
-toml = "0.8"
 
 # Regex
 regex = "1"
