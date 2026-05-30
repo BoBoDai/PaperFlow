@@ -2,6 +2,7 @@
 title = "PaperFlow 技术文档"
 authors = ["PaperFlow Team"]
 language = "zh-CN"
+src = "."
 
 [output.html]
 no-section-label = true
