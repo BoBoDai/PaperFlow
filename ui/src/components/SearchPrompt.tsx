@@ -27,8 +27,14 @@ export const SearchPrompt: React.FC<SearchPromptProps> = ({
 
   // Handle text input
   useInput((input, key) => {
-    // Escape → cancel
-    if (key.escape) {
+    // Ctrl+C → cancel (check before key.ctrl guard below)
+    if ((input === 'c' || input === '\x03') && key.ctrl) {
+      onCancel();
+      return;
+    }
+
+    // Escape → cancel (also handle raw escape char for some terminals)
+    if (key.escape || input === '\x1b') {
       onCancel();
       return;
     }
@@ -52,7 +58,7 @@ export const SearchPrompt: React.FC<SearchPromptProps> = ({
       return;
     }
 
-    // Ignore control characters and meta keys
+    // Ignore control/meta (but allow through after handling Ctrl+C above)
     if (key.ctrl || key.meta) {
       return;
     }

@@ -73,27 +73,50 @@ const App: React.FC = () => {
   // ── Global keyboard input (non-search modes) ────────────────────
   // Search mode input is handled by SearchPrompt component
 
+  // Ctrl+C double-press tracking
+  const [ctrlCPress, setCtrlCPress] = useState(0);
+
   useInput((input, key) => {
+    // Ctrl+C — double press to quit (must be FIRST before any other check)
+    if ((input === 'c' || input === '\x03') && key.ctrl) {
+      const now = Date.now();
+      if (ctrlCPress > 0 && now - ctrlCPress < 3000) {
+        process.exit(0);
+      }
+      setCtrlCPress(now);
+      return;
+    }
+    // Reset ctrl+c counter after 3s
+    if (ctrlCPress > 0 && Date.now() - ctrlCPress > 3000) {
+      setCtrlCPress(0);
+    }
+
     // Don't handle text input when SearchPrompt is active
     // (search mode without config overlay)
     if (mode === 'search' && !showConfig) return;
 
-    // In error mode, any non-special key goes to search
-    if (mode === 'error' && !showConfig) {
-      if (key.escape) { setMode('welcome'); return; }
-      if (input === '/') { setShowConfig(true); return; }
-      // Any other key → go to search
-      setMode('search');
-      setSearchQuery('');
-      setError(null);
+    // Escape — cancel current action, go back
+    const isEsc = key.escape || input === '\x1b';
+
+    if (isEsc) {
+      if (showConfig) { setShowConfig(false); return; }
+      if (mode === 'search') { setMode('welcome'); setSearchQuery(''); return; }
+      if (mode === 'list') { setMode('search'); setSearchQuery(''); return; }
+      if (mode === 'detail') { setMode('list'); return; }
+      if (mode === 'error') { setMode('search'); setError(null); return; }
+      if (mode === 'loading' || mode === 'translating') { abortRef.current = true; setMode('welcome'); return; }
       return;
     }
 
-    // Escape
-    if (key.escape) {
-      if (showConfig) { setShowConfig(false); return; }
-      if (mode === 'list') { setMode('search'); setSearchQuery(''); return; }
-      if (mode === 'detail') { setMode('list'); return; }
+    // Ctrl+C is handled by process SIGINT handler in index.tsx
+    // (double-press to quit, Esc to cancel current action)
+
+    // In error mode, any other key goes to search
+    if (mode === 'error' && !showConfig) {
+      if (input === '/') { setShowConfig(true); return; }
+      setMode('search');
+      setSearchQuery('');
+      setError(null);
       return;
     }
 
@@ -110,8 +133,8 @@ const App: React.FC = () => {
       return;
     }
 
-    // Quick presets on welcome
-    if (mode === 'welcome') {
+    // Quick presets on welcome (ignore if ctrl/meta held)
+    if (mode === 'welcome' && !key.ctrl && !key.meta) {
       if (input === 'r' || input === 'R') { handleQuickSearch(presets.robotics); return; }
       if (input === 'a' || input === 'A') { handleQuickSearch(presets.ai); return; }
       if (input === 'c' || input === 'C') { handleQuickSearch(presets.cv); return; }
@@ -124,7 +147,7 @@ const App: React.FC = () => {
     }
 
     // Number keys - select paper from list
-    if (mode === 'list') {
+    if (mode === 'list' && !key.ctrl && !key.meta) {
       const num = parseInt(input);
       if (num >= 1 && num <= papers.length) {
         setSelectedPaper(papers[num - 1]);
@@ -134,19 +157,19 @@ const App: React.FC = () => {
     }
 
     // s - speak in detail view
-    if (input === 's' && mode === 'detail' && selectedPaper) {
+    if (input === 's' && mode === 'detail' && selectedPaper && !key.ctrl) {
       handleSpeak(selectedPaper.summary || selectedPaper.title);
       return;
     }
 
     // f - save/favorite in detail view
-    if (input === 'f' && mode === 'detail' && selectedPaper) {
+    if (input === 'f' && mode === 'detail' && selectedPaper && !key.ctrl) {
       handleSave(selectedPaper);
       return;
     }
 
     // b - back from detail
-    if (input === 'b' && mode === 'detail') {
+    if (input === 'b' && mode === 'detail' && !key.ctrl) {
       setMode('list');
       return;
     }
@@ -298,22 +321,24 @@ const App: React.FC = () => {
     );
   }
 
+  let content: React.ReactNode = null;
+
   switch (mode) {
     case 'welcome':
-      return (
+      content = (
         <Welcome
           onStart={() => setMode('search')}
           onQuickSearch={(id) => presets[id] && handleQuickSearch(presets[id])}
         />
       );
+      break;
 
     case 'search':
-      return (
+      content = (
         <SearchPrompt
           value={searchQuery}
           onChange={setSearchQuery}
           onSubmit={(query) => {
-            // Check for quick commands
             const cmd = query.toLowerCase();
             if (cmd === '/robotics' || cmd === '/r') { handleQuickSearch(presets.robotics); return; }
             if (cmd === '/ai' || cmd === '/a') { handleQuickSearch(presets.ai); return; }
@@ -323,33 +348,37 @@ const App: React.FC = () => {
           onCancel={() => setMode('welcome')}
         />
       );
+      break;
 
     case 'loading':
-      return (
+      content = (
         <LoadingScreen
           message={loadingMessage}
           categories={categoryProgress}
         />
       );
+      break;
 
     case 'translating':
-      return (
+      content = (
         <LoadingScreen
           message="翻译查询..."
           categories={[{ category: '中译英', status: 'fetching' }]}
         />
       );
+      break;
 
     case 'list':
-      return (
+      content = (
         <PaperList
           papers={papers}
           onSelect={(paper) => { setSelectedPaper(paper); setMode('detail'); }}
         />
       );
+      break;
 
     case 'detail':
-      return selectedPaper ? (
+      content = selectedPaper ? (
         <PaperDetail
           paper={selectedPaper}
           onBack={() => setMode('list')}
@@ -358,9 +387,10 @@ const App: React.FC = () => {
           apiKey={apiKey}
         />
       ) : null;
+      break;
 
     case 'error':
-      return (
+      content = (
         <Box flexDirection="column" padding={1}>
           <Box marginBottom={1}>
             <Text bold color="yellow">提示</Text>
@@ -371,10 +401,19 @@ const App: React.FC = () => {
           </Box>
         </Box>
       );
-
-    default:
-      return null;
+      break;
   }
+
+  return (
+    <Box flexDirection="column">
+      {content}
+      {ctrlCPress > 0 && (Date.now() - ctrlCPress < 3000) && (
+        <Box>
+          <Text dimColor>  再次按 Ctrl+C 退出</Text>
+        </Box>
+      )}
+    </Box>
+  );
 };
 
 export default App;
