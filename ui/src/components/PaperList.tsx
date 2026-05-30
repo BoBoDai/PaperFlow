@@ -71,7 +71,7 @@ export const PaperList: React.FC<PaperListProps> = ({ papers, onSelect, title })
       {/* Keyboard hints */}
       <Box marginTop={1}>
         <Text dimColor>
-          1-{Math.min(papers.length, 9)} 选择    / 配置    Esc 返回
+          1-{Math.min(papers.length, 9)} 选择    / 配置    q 返回
         </Text>
       </Box>
     </Box>

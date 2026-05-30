@@ -95,11 +95,10 @@ const App: React.FC = () => {
     // (search mode without config overlay)
     if (mode === 'search' && !showConfig) return;
 
-    // Escape — cancel current action, go back
-    const isEsc = key.escape || input === '\x1b';
-
-    if (isEsc) {
-      if (showConfig) { setShowConfig(false); return; }
+    // Back navigation: Esc or q (Esc may be intercepted by IDE terminal)
+    const isBack = key.escape || input === '\x1b' || ((input === 'q' || input === 'Q') && !key.ctrl && !key.meta);
+    if (isBack && !showConfig) {
+      if (mode === 'welcome') { process.exit(0); return; }
       if (mode === 'search') { setMode('welcome'); setSearchQuery(''); return; }
       if (mode === 'list') { setMode('search'); setSearchQuery(''); return; }
       if (mode === 'detail') { setMode('list'); return; }
@@ -107,9 +106,7 @@ const App: React.FC = () => {
       if (mode === 'loading' || mode === 'translating') { abortRef.current = true; setMode('welcome'); return; }
       return;
     }
-
-    // Ctrl+C is handled by process SIGINT handler in index.tsx
-    // (double-press to quit, Esc to cancel current action)
+    if (isBack && showConfig) { setShowConfig(false); return; }
 
     // In error mode, any other key goes to search
     if (mode === 'error' && !showConfig) {
@@ -118,11 +115,6 @@ const App: React.FC = () => {
       setSearchQuery('');
       setError(null);
       return;
-    }
-
-    // q - quit from welcome
-    if ((input === 'q' || input === 'Q') && mode === 'welcome') {
-      process.exit(0);
     }
 
     // / - config (only in welcome and list modes)
@@ -397,7 +389,7 @@ const App: React.FC = () => {
           </Box>
           <Text>{error}</Text>
           <Box marginTop={1}>
-            <Text dimColor>按任意键重新搜索    Esc 返回首页</Text>
+            <Text dimColor>按任意键重新搜索    q 返回首页</Text>
           </Box>
         </Box>
       );

@@ -151,7 +151,7 @@ export const PaperDetail: React.FC<PaperDetailProps> = ({ paper, onBack, onSpeak
 
       {/* Keyboard hints */}
       <Box marginTop={1}>
-        <Text dimColor>f 收藏    s 语音播报    b 返回    / 配置</Text>
+        <Text dimColor>f 收藏    s 语音    q 返回    / 配置</Text>
       </Box>
     </Box>
   );

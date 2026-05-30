@@ -33,7 +33,11 @@ export const SearchPrompt: React.FC<SearchPromptProps> = ({
       return;
     }
 
-    // Escape → cancel (also handle raw escape char for some terminals)
+    // q on empty input → cancel (q = back, Esc may be intercepted by IDE terminal)
+    if ((input === 'q' || input === 'Q') && !key.ctrl && !key.meta && !value) {
+      onCancel();
+      return;
+    }
     if (key.escape || input === '\x1b') {
       onCancel();
       return;
@@ -97,7 +101,7 @@ export const SearchPrompt: React.FC<SearchPromptProps> = ({
 
       {/* Hints */}
       <Box>
-        <Text dimColor>Enter 搜索    Esc 返回</Text>
+        <Text dimColor>Enter 搜索    q 返回</Text>
       </Box>
     </Box>
   );
