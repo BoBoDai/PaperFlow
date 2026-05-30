@@ -2,6 +2,7 @@
 
 use super::state::{ApiConfig, ApiState};
 use crate::modules::arxiv::ArxivClient;
+use crate::modules::semantic_scholar::SemanticScholarClient;
 use crate::modules::llm::{LlmConfig, LlmProvider, MiniMaxProvider, OpenAiProvider};
 use crate::modules::filter::Filter;
 use crate::core::{UserPreferences, Paper};
@@ -148,30 +149,54 @@ pub async fn quick_search(
     }
     let preset = preset.unwrap();
 
-    let client = ArxivClient::new();
-    tracing::info!("快捷查询: {} → {:?}", query.preset, preset.categories);
-    match client
-        .search_multi_categories(&preset.categories, per_category)
-        .await
-    {
-        Ok(papers) => {
-            tracing::info!("快捷查询返回 {} 篇论文", papers.len());
-            let prefs = UserPreferences {
-                keywords: vec![query.preset.clone()],
-                max_papers_per_fetch: max,
-                ..Default::default()
-            };
-            let scored = Filter::filter_and_score(papers, &prefs);
-            // Truncate to max
-            let limited: Vec<Paper> = scored.into_iter().take(max).collect();
-            let responses: Vec<PaperResponse> = limited.into_iter().map(|p| p.into()).collect();
-            Json(SearchResponse { papers: responses })
-        }
-        Err(e) => {
-            tracing::error!("快捷查询失败: {}", e);
-            Json(SearchResponse { papers: vec![] })
+    let arxiv_client = ArxivClient::new();
+    let ss_client = SemanticScholarClient::new();
+
+    tracing::info!("快捷查询: {} → arXiv {:?} + Semantic Scholar", query.preset, preset.categories);
+
+    // Query arXiv and Semantic Scholar in parallel
+    let (arxiv_result, ss_result) = tokio::join!(
+        arxiv_client.search_multi_categories(&preset.categories, per_category),
+        ss_client.search(&query.preset, per_category, None),
+    );
+
+    let mut all_papers: Vec<Paper> = Vec::new();
+    let mut seen_ids = std::collections::HashSet::new();
+
+    // Merge arXiv results
+    if let Ok(papers) = arxiv_result {
+        for p in papers {
+            if seen_ids.insert(p.id.clone()) {
+                all_papers.push(p);
+            }
         }
     }
+
+    // Merge Semantic Scholar results
+    if let Ok(papers) = ss_result {
+        for p in papers {
+            // Use DOI or title as dedup key for SS papers
+            let dedup_key = p.id.clone();
+            if seen_ids.insert(dedup_key) {
+                all_papers.push(p);
+            }
+        }
+    }
+
+    tracing::info!("快捷查询返回 {} 篇论文 (arXiv + Semantic Scholar)", all_papers.len());
+
+    // Sort by published date descending
+    all_papers.sort_by(|a, b| b.published.cmp(&a.published));
+
+    let prefs = UserPreferences {
+        keywords: vec![query.preset.clone()],
+        max_papers_per_fetch: max,
+        ..Default::default()
+    };
+    let scored = Filter::filter_and_score(all_papers, &prefs);
+    let limited: Vec<Paper> = scored.into_iter().take(max).collect();
+    let responses: Vec<PaperResponse> = limited.into_iter().map(|p| p.into()).collect();
+    Json(SearchResponse { papers: responses })
 }
 
 /// List saved papers
@@ -390,6 +415,78 @@ fn extract_json_field(text: &str, field: &str) -> String {
         text.lines().next().unwrap_or("").trim().trim_matches('"').to_string()
     } else {
         String::new()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SavePaperRequest {
+    pub id: String,
+    pub title: String,
+    pub authors: Vec<String>,
+    pub abstract_text: String,
+    pub categories: Vec<String>,
+    pub published: Option<String>,
+    pub pdf_url: Option<String>,
+    pub source: Option<String>,
+    pub venue: Option<String>,
+}
+
+/// Save a paper to the database
+pub async fn save_paper(
+    State(state): State<ApiState>,
+    Json(req): Json<SavePaperRequest>,
+) -> Json<serde_json::Value> {
+    let published = req.published.as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+        .unwrap_or_else(chrono::Utc::now);
+
+    let paper = Paper {
+        id: req.id,
+        title: req.title,
+        authors: req.authors,
+        abstract_text: req.abstract_text,
+        categories: req.categories,
+        published,
+        updated: published,
+        pdf_url: req.pdf_url.unwrap_or_default(),
+        relevance_score: None,
+        summary: None,
+        source: req.source.unwrap_or_else(|| "arxiv".into()),
+        venue: req.venue,
+        is_read: false,
+    };
+
+    match state.db.save_paper(&paper).await {
+        Ok(_) => Json(serde_json::json!({"success": true})),
+        Err(e) => Json(serde_json::json!({"success": false, "error": e.to_string()})),
+    }
+}
+
+/// List saved (unread) papers
+pub async fn list_saved(
+    State(state): State<ApiState>,
+    Query(query): Query<SearchQuery>,
+) -> Json<SearchResponse> {
+    let limit = query.max_results.unwrap_or(50);
+    match state.db.list_unread_papers(limit).await {
+        Ok(papers) => {
+            let responses: Vec<PaperResponse> = papers.into_iter().map(|p| p.into()).collect();
+            Json(SearchResponse { papers: responses })
+        }
+        Err(_) => Json(SearchResponse { papers: vec![] }),
+    }
+}
+
+/// Mark paper as read
+pub async fn mark_read(
+    State(state): State<ApiState>,
+    Json(req): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let id = req.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    match state.db.mark_paper_read(id).await {
+        Ok(_) => Json(serde_json::json!({"success": true})),
+        Err(e) => Json(serde_json::json!({"success": false, "error": e.to_string()})),
     }
 }
 

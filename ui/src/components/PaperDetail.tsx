@@ -7,6 +7,7 @@ interface PaperDetailProps {
   paper: ArxivPaper;
   onBack: () => void;
   onSpeak: (text: string) => void;
+  onSave: (paper: ArxivPaper) => void;
   apiKey: string;
 }
 
@@ -16,7 +17,7 @@ const Divider: React.FC<{ label?: string }> = ({ label }) => (
   </Box>
 );
 
-export const PaperDetail: React.FC<PaperDetailProps> = ({ paper, onBack, onSpeak, apiKey }) => {
+export const PaperDetail: React.FC<PaperDetailProps> = ({ paper, onBack, onSpeak, onSave, apiKey }) => {
   const [summary, setSummary] = useState<PaperSummary | null>(null);
   const [translation, setTranslation] = useState<PaperTranslation | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -150,7 +151,7 @@ export const PaperDetail: React.FC<PaperDetailProps> = ({ paper, onBack, onSpeak
 
       {/* Keyboard hints */}
       <Box marginTop={1}>
-        <Text dimColor>s 语音播报    b 返回    / 配置</Text>
+        <Text dimColor>f 收藏    s 语音播报    b 返回    / 配置</Text>
       </Box>
     </Box>
   );

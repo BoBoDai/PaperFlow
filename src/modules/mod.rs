@@ -3,6 +3,7 @@
 pub mod arxiv;
 pub mod filter;
 pub mod llm;
+pub mod semantic_scholar;
 pub mod speech;
 pub mod storage;
 pub mod scheduler;

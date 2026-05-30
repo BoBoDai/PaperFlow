@@ -5,6 +5,7 @@
 use directories::ProjectDirs;
 use paperflow::api::{run_server, ApiState, state::ApiConfig};
 use paperflow::core::AppConfig;
+use paperflow::modules::scheduler::Scheduler;
 use paperflow::modules::storage::Database;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -46,12 +47,19 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("无法保存配置文件: {}", e);
     }
 
-    // Create API state
+    // Create API state (clone db for scheduler)
     let state = ApiState {
-        db,
+        db: db.clone(),
         config: Arc::new(RwLock::new(api_config)),
         config_path,
     };
+
+    // Start background scheduler
+    let scheduler_db = db.clone();
+    let scheduler = Scheduler::new(60); // check every 60 minutes
+    tokio::spawn(async move {
+        scheduler.start(scheduler_db).await;
+    });
 
     // Run server
     run_server(state).await

@@ -139,6 +139,12 @@ const App: React.FC = () => {
       return;
     }
 
+    // f - save/favorite in detail view
+    if (input === 'f' && mode === 'detail' && selectedPaper) {
+      handleSave(selectedPaper);
+      return;
+    }
+
     // b - back from detail
     if (input === 'b' && mode === 'detail') {
       setMode('list');
@@ -254,6 +260,15 @@ const App: React.FC = () => {
     await speakText(text, config.voiceSpeed);
   };
 
+  const handleSave = async (paper: ArxivPaper): Promise<void> => {
+    const { savePaper } = await import('./services/arxiv');
+    try {
+      await savePaper(paper);
+    } catch {
+      // Silently fail — paper might already be saved
+    }
+  };
+
   const handleConfigUpdate = async (key: keyof AppConfig | 'apiKey', value: any): Promise<void> => {
     if (key === 'apiKey') {
       // Save API key to backend config file
@@ -339,6 +354,7 @@ const App: React.FC = () => {
           paper={selectedPaper}
           onBack={() => setMode('list')}
           onSpeak={handleSpeak}
+          onSave={handleSave}
           apiKey={apiKey}
         />
       ) : null;

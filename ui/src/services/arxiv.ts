@@ -57,6 +57,26 @@ export async function quickSearch(preset: string, maxResults: number = 10): Prom
   }));
 }
 
+/** Save a paper to the database */
+export async function savePaper(paper: ArxivPaper): Promise<void> {
+  const url = `${API_BASE}/api/papers/save`;
+  await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id: paper.id,
+      title: paper.title,
+      authors: paper.authors,
+      abstract_text: paper.summary,
+      categories: paper.categories,
+      published: paper.published,
+      pdf_url: paper.pdfUrl,
+      source: paper.source,
+      venue: paper.venue,
+    }),
+  });
+}
+
 /** Search a single arXiv category (for streaming/parallel fetch) */
 export async function searchByCategory(category: string, maxResults: number = 3): Promise<ArxivPaper[]> {
   const query = `cat:${category}`;
