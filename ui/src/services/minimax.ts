@@ -8,11 +8,37 @@ export interface PaperSummary {
   key_points: string[];
 }
 
-// Note: translateQuery still calls MiniMax directly since it's a simple API call
-export async function translateQuery(query: string, apiKey: string): Promise<string> {
-  // For now, just return the query as-is
-  // The Rust backend will handle translation when searching
-  return query;
+export interface TranslateResult {
+  text: string;
+  translated: boolean;
+}
+
+/** Translate Chinese query to English via backend LLM */
+export async function translateQuery(query: string, apiKey: string): Promise<TranslateResult> {
+  // If no Chinese characters, return as-is
+  if (!/[一-龥]/.test(query)) {
+    return { text: query, translated: false };
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/api/translate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: query }),
+    });
+
+    if (!response.ok) {
+      return { text: query, translated: false };
+    }
+
+    const data = await response.json();
+    return {
+      text: data.translated || query,
+      translated: data.success === true,
+    };
+  } catch {
+    return { text: query, translated: false };
+  }
 }
 
 export async function summarizePaper(paper: ArxivPaper, apiKey: string): Promise<PaperSummary> {
@@ -39,6 +65,31 @@ export async function summarizePaper(paper: ArxivPaper, apiKey: string): Promise
 export async function verbalizeText(summary: string, apiKey: string): Promise<string> {
   // For now, return the summary as-is for TTS
   return summary;
+}
+
+export interface PaperTranslation {
+  title_cn: string;
+  abstract_cn: string;
+  success: boolean;
+}
+
+/** Translate paper title and abstract to Chinese */
+export async function translatePaper(title: string, abstractText: string): Promise<PaperTranslation> {
+  try {
+    const response = await fetch(`${API_BASE}/api/translate-paper`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, abstract_text: abstractText }),
+    });
+
+    if (!response.ok) {
+      return { title_cn: '', abstract_cn: '', success: false };
+    }
+
+    return response.json();
+  } catch {
+    return { title_cn: '', abstract_cn: '', success: false };
+  }
 }
 
 export interface ApiConfig {

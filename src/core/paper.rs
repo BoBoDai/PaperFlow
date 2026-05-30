@@ -36,6 +36,12 @@ pub struct Paper {
     /// 生成的摘要
     pub summary: Option<Summary>,
 
+    /// 论文来源
+    pub source: String,
+
+    /// 期刊/会议名称
+    pub venue: Option<String>,
+
     /// 是否已读
     pub is_read: bool,
 }
@@ -53,6 +59,8 @@ impl Paper {
             pdf_url: String::new(),
             relevance_score: None,
             summary: None,
+            source: "arxiv".to_string(),
+            venue: None,
             is_read: false,
         }
     }

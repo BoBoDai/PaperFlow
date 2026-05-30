@@ -18,7 +18,10 @@ pub struct ArxivClient {
 impl ArxivClient {
     pub fn new() -> Self {
         Self {
-            http_client: Client::new(),
+            http_client: Client::builder()
+                .no_proxy()
+                .build()
+                .unwrap_or_else(|_| Client::new()),
             base_url: "https://export.arxiv.org/api/query".to_string(),
         }
     }
@@ -40,6 +43,52 @@ impl ArxivClient {
             .map_err(|e| Error::Network(e.to_string()))?;
 
         self.parse_feed(&body)
+    }
+
+    /// 按分类搜索近期论文
+    /// category: arXiv 分类如 "cs.RO", "cs.AI", "cs.CV"
+    pub async fn search_by_category(
+        &self,
+        category: &str,
+        max_results: usize,
+    ) -> Result<Vec<Paper>> {
+        let query = format!("cat:{}", category);
+        self.search(&query, max_results).await
+    }
+
+    /// 并行搜索多个分类的最新论文（带延迟以避免被限速）
+    pub async fn search_multi_categories(
+        &self,
+        categories: &[&str],
+        max_per_category: usize,
+    ) -> Result<Vec<Paper>> {
+        let mut all_papers: Vec<Paper> = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+
+        for (i, category) in categories.iter().enumerate() {
+            // arXiv API rate limit: add 3s delay between requests (except first)
+            if i > 0 {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            }
+
+            match self.search_by_category(category, max_per_category).await {
+                Ok(papers) => {
+                    tracing::info!("arXiv {} → {} 篇论文", category, papers.len());
+                    for paper in papers {
+                        if seen_ids.insert(paper.id.clone()) {
+                            all_papers.push(paper);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("arXiv {} 查询失败: {}", category, e);
+                }
+            }
+        }
+
+        // Sort by published date descending
+        all_papers.sort_by(|a, b| b.published.cmp(&a.published));
+        Ok(all_papers)
     }
 
     /// 解析 Atom feed
@@ -111,16 +160,18 @@ impl ArxivClient {
             }
 
             papers.push(Paper {
-                id,
+                id: id.clone(),
                 title,
                 authors,
                 abstract_text: summary,
-                categories,
+                categories: categories.clone(),
                 published,
                 updated,
                 pdf_url,
                 relevance_score: None,
                 summary: None,
+                source: "arxiv".to_string(),
+                venue: None,
                 is_read: false,
             });
         }

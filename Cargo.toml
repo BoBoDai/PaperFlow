@@ -40,5 +40,8 @@ async-trait = "0.1"
 # Regex
 regex = "1"
 
+# Config file
+toml = "0.8"
+
 [dev-dependencies]
 mockall = "0.13"

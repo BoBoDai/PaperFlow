@@ -6,4 +6,4 @@ pub mod providers;
 
 pub use trait_::{LlmProvider, LlmConfig};
 pub use prompt::PromptManager;
-pub use providers::MiniMaxProvider;
+pub use providers::{MiniMaxProvider, OpenAiProvider};

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Text, Box, Spacer } from 'ink';
+import { Text, Box } from 'ink';
 import { ArxivPaper } from '../services/arxiv';
-import { summarizePaper, PaperSummary } from '../services/minimax';
+import { summarizePaper, translatePaper, PaperSummary, PaperTranslation } from '../services/minimax';
 
 interface PaperDetailProps {
   paper: ArxivPaper;
@@ -10,23 +10,37 @@ interface PaperDetailProps {
   apiKey: string;
 }
 
-export const PaperDetail: React.FC<PaperDetailProps> = ({ paper, onBack, apiKey }) => {
+const Divider: React.FC<{ label?: string }> = ({ label }) => (
+  <Box>
+    <Text dimColor>{label ? `─── ${label} ───` : '──────────────────────────────────'}</Text>
+  </Box>
+);
+
+export const PaperDetail: React.FC<PaperDetailProps> = ({ paper, onBack, onSpeak, apiKey }) => {
   const [summary, setSummary] = useState<PaperSummary | null>(null);
+  const [translation, setTranslation] = useState<PaperTranslation | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (paper && apiKey) {
-      loadSummary();
+    if (paper) {
+      loadContent();
     }
-  }, [paper, apiKey]);
+  }, [paper]);
 
-  const loadSummary = async (): Promise<void> => {
+  const loadContent = async (): Promise<void> => {
     setIsLoading(true);
     setError(null);
     try {
-      const result = await summarizePaper(paper, apiKey);
-      setSummary(result);
+      // Fetch summary and translation in parallel
+      const [sumResult, transResult] = await Promise.all([
+        summarizePaper(paper, apiKey),
+        translatePaper(paper.title, paper.summary || ''),
+      ]);
+      setSummary(sumResult);
+      if (transResult.success) {
+        setTranslation(transResult);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -34,47 +48,109 @@ export const PaperDetail: React.FC<PaperDetailProps> = ({ paper, onBack, apiKey 
     }
   };
 
+  const sourceText = paper.venue
+    ? paper.venue
+    : paper.source === 'arxiv'
+      ? `arXiv · ${paper.id}`
+      : `${paper.source} · ${paper.id}`;
+
   return (
     <Box flexDirection="column" padding={1}>
-      <Box marginBottom={1}>
-        <Text bold color="cyan">{paper.title}</Text>
+      <Divider label="论文详情" />
+
+      {/* Title — bilingual */}
+      <Box marginY={1} flexDirection="column">
+        <Text bold>{paper.title}</Text>
+        {translation?.title_cn ? (
+          <Text color="cyan">{translation.title_cn}</Text>
+        ) : null}
       </Box>
 
-      <Box borderStyle="round" padding={1} flexDirection="column">
-        <Text dimColor>作者: {paper.authors.join(', ')}</Text>
-        <Text dimColor>发表: {paper.published}</Text>
-        <Text dimColor>分类: {paper.categories.join(', ')}</Text>
-      </Box>
-
-      <Spacer />
-
-      {isLoading && <Text color="yellow">正在生成摘要...</Text>}
-
-      {error && <Text color="red">错误: {error}</Text>}
-
-      {summary && (
-        <Box flexDirection="column" gap={1}>
-          <Text bold>摘要:</Text>
-          <Text>{summary.detailed_summary}</Text>
-
-          {summary.key_points.length > 0 && (
-            <>
-              <Spacer />
-              <Text bold>关键点:</Text>
-              {summary.key_points.map((point, i) => (
-                <Text key={i}>- {point}</Text>
-              ))}
-            </>
-          )}
+      {/* Metadata */}
+      <Box flexDirection="column">
+        <Box>
+          <Text dimColor>作者  </Text>
+          <Text>{paper.authors.join(', ')}</Text>
         </Box>
-      )}
+        <Box>
+          <Text dimColor>日期  </Text>
+          <Text>{paper.published}</Text>
+        </Box>
+        <Box>
+          <Text dimColor>分类  </Text>
+          <Text>{paper.categories.join(', ') || '--'}</Text>
+        </Box>
+        <Box>
+          <Text dimColor>来源  </Text>
+          <Text>{sourceText}</Text>
+        </Box>
+        {paper.pdfUrl ? (
+          <Box>
+            <Text dimColor>PDF   </Text>
+            <Text dimColor>{paper.pdfUrl}</Text>
+          </Box>
+        ) : null}
+      </Box>
 
-      <Spacer />
+      {/* Abstract — bilingual */}
+      <Box marginTop={1}>
+        <Divider label="摘要" />
+      </Box>
+      <Box marginTop={1} flexDirection="column">
+        <Text>{paper.summary || '暂无摘要'}</Text>
+        {translation?.abstract_cn ? (
+          <Box marginTop={1}>
+            <Text color="cyan">{translation.abstract_cn}</Text>
+          </Box>
+        ) : null}
+      </Box>
 
-      <Box flexDirection="column" gap={1}>
-        <Text dimColor>按 s 语音播报</Text>
-        <Text dimColor>按 / 显示配置</Text>
-        <Text dimColor>按 Esc 返回</Text>
+      {/* LLM analysis */}
+      <Box marginTop={1}>
+        <Divider label="智能分析" />
+      </Box>
+      <Box marginTop={1} flexDirection="column">
+        {isLoading && <Text dimColor>  正在生成...</Text>}
+        {error && <Text color="red">  失败: {error}</Text>}
+        {!isLoading && !error && !summary && (
+          <Text dimColor>  暂无分析结果</Text>
+        )}
+
+        {summary && (
+          <>
+            {summary.short_summary ? (
+              <Box flexDirection="column" marginBottom={0}>
+                <Box>
+                  <Text dimColor>概述  </Text>
+                  <Text>{summary.short_summary}</Text>
+                </Box>
+              </Box>
+            ) : null}
+
+            {summary.detailed_summary ? (
+              <Box flexDirection="column" marginBottom={0}>
+                <Box>
+                  <Text dimColor>分析  </Text>
+                  <Text>{summary.detailed_summary}</Text>
+                </Box>
+              </Box>
+            ) : null}
+
+            {summary.key_points.length > 0 ? (
+              <Box flexDirection="column">
+                <Text dimColor>关键点</Text>
+                {summary.key_points.map((point, i) => (
+                  <Text key={i} dimColor>    · {point}</Text>
+                ))}
+              </Box>
+            ) : null}
+          </>
+        )}
+      </Box>
+
+      {/* Keyboard hints */}
+      <Box marginTop={1}>
+        <Text dimColor>s 语音播报    b 返回    / 配置</Text>
       </Box>
     </Box>
   );

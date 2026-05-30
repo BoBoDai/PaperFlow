@@ -293,6 +293,8 @@ impl From<PaperRow> for Paper {
             pdf_url: row.pdf_url,
             relevance_score: row.relevance_score,
             summary: None,
+            source: "arxiv".to_string(),
+            venue: None,
             is_read: row.is_read,
         }
     }

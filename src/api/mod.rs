@@ -21,6 +21,9 @@ pub async fn run_server(state: ApiState) -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/api/search", get(handlers::search_papers))
+        .route("/api/quick-search", get(handlers::quick_search))
+        .route("/api/translate", post(handlers::translate_query))
+        .route("/api/translate-paper", post(handlers::translate_paper))
         .route("/api/papers", get(handlers::list_papers))
         .route("/api/summarize", post(handlers::summarize_paper))
         .route("/api/config", get(handlers::get_config))
