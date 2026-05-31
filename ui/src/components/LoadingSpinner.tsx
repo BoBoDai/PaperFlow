@@ -17,10 +17,13 @@ interface LoadingScreenProps {
   message: string;
   /** Per-category progress */
   categories: CategoryProgress[];
+  /** Rotating search hints, shown one at a time */
+  hints?: string[];
 }
 
-export const LoadingScreen: React.FC<LoadingScreenProps> = ({ message, categories }) => {
+export const LoadingScreen: React.FC<LoadingScreenProps> = ({ message, categories, hints }) => {
   const [frame, setFrame] = useState(0);
+  const [hintIndex, setHintIndex] = useState(0);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -28,6 +31,15 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ message, categorie
     }, 80);
     return () => clearInterval(interval);
   }, []);
+
+  // Rotate through hints every 4 seconds
+  useEffect(() => {
+    if (!hints || hints.length <= 1) return;
+    const interval = setInterval(() => {
+      setHintIndex(prev => (prev + 1) % hints.length);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [hints]);
 
   const statusText = (cat: CategoryProgress): string => {
     switch (cat.status) {
@@ -66,6 +78,14 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ message, categorie
         <Text> </Text>
         <Text bold>{message}</Text>
       </Box>
+
+      {/* Search hint */}
+      {hints && hints.length > 0 && (
+        <Box marginBottom={1}>
+          <Text>  </Text>
+          <Text dimColor>💡 {hints[hintIndex]}</Text>
+        </Box>
+      )}
 
       {/* Category progress */}
       <Box flexDirection="column">

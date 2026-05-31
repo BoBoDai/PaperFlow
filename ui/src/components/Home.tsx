@@ -1,9 +1,15 @@
 import React from 'react';
 import { Text, Box } from 'ink';
 
-interface WelcomeProps {
+interface HomeProps {
+  /** Called when user presses Enter with empty buffer (placeholder for focus) */
   onStart: () => void;
+  /** Quick search by preset id */
   onQuickSearch: (preset: string) => void;
+  /** Recent search queries (newest first), max ~8 shown */
+  history: string[];
+  /** Re-run a history query */
+  onHistorySelect: (query: string) => void;
 }
 
 const presets = [
@@ -12,7 +18,7 @@ const presets = [
   { key: 'c', id: 'cv', label: '视觉', cats: 'cs.CV, cs.AI' },
 ];
 
-export const Welcome: React.FC<WelcomeProps> = ({ onStart, onQuickSearch }) => {
+export const Home: React.FC<HomeProps> = ({ onStart, onQuickSearch, history, onHistorySelect }) => {
   return (
     <Box flexDirection="column" padding={1}>
       {/* Title */}
@@ -33,6 +39,24 @@ export const Welcome: React.FC<WelcomeProps> = ({ onStart, onQuickSearch }) => {
           </Box>
         ))}
       </Box>
+
+      {/* Search history */}
+      {history.length > 0 && (
+        <Box flexDirection="column" marginBottom={1}>
+          <Text bold>搜索历史</Text>
+          {history.slice(0, 8).map((query, i) => (
+            <Box key={i}>
+              <Text>  </Text>
+              <Text color="yellow" bold>{i + 1}</Text>
+              <Text>  </Text>
+              <Text>{query}</Text>
+            </Box>
+          ))}
+          <Box marginTop={0}>
+            <Text dimColor>  按数字键重新搜索</Text>
+          </Box>
+        </Box>
+      )}
 
       {/* Hint line */}
       <Box>

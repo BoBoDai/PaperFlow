@@ -3,19 +3,18 @@ import { Box, Text } from 'ink';
 import { useInput } from 'ink';
 
 // Components
-import { SearchPrompt } from './components/SearchPrompt';
+import { PersistentInputBar } from './components/PersistentInputBar';
 import { PaperList } from './components/PaperList';
 import { PaperDetail } from './components/PaperDetail';
 import { ConfigMenu } from './components/ConfigMenu';
 import { LoadingScreen, CategoryProgress } from './components/LoadingSpinner';
-import { Welcome } from './components/Welcome';
+import { Home } from './components/Home';
 
 // Services
 import { searchArxiv, quickSearch, ArxivPaper } from './services/arxiv';
-import { translateQuery } from './services/minimax';
 import { speakText } from './services/tts';
 
-type AppMode = 'welcome' | 'search' | 'loading' | 'translating' | 'list' | 'detail' | 'error';
+type AppMode = 'welcome' | 'loading' | 'list' | 'detail' | 'error';
 
 interface AppConfig {
   maxPapers: number;
@@ -53,7 +52,6 @@ const presets: Record<string, Preset> = {
 
 const App: React.FC = () => {
   const [mode, setMode] = useState<AppMode>('welcome');
-  const [searchQuery, setSearchQuery] = useState('');
   const [papers, setPapers] = useState<ArxivPaper[]>([]);
   const [selectedPaper, setSelectedPaper] = useState<ArxivPaper | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -65,19 +63,23 @@ const App: React.FC = () => {
     voiceSpeed: 5,
   });
 
+  // ── Persistent input buffer ────────────────────────────────────
+  const [inputBuffer, setInputBuffer] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchHistory, setSearchHistory] = useState<string[]>([]);
+
   // Loading state
   const [loadingMessage, setLoadingMessage] = useState('');
   const [categoryProgress, setCategoryProgress] = useState<CategoryProgress[]>([]);
   const abortRef = useRef(false);
 
-  // ── Global keyboard input (non-search modes) ────────────────────
-  // Search mode input is handled by SearchPrompt component
+  // ── Global keyboard input ──────────────────────────────────────
 
   // Ctrl+C double-press tracking
   const [ctrlCPress, setCtrlCPress] = useState(0);
 
   useInput((input, key) => {
-    // Ctrl+C — double press to quit (must be FIRST before any other check)
+    // ── Ctrl+C — double press to quit (always first) ──────────
     if ((input === 'c' || input === '\x03') && key.ctrl) {
       const now = Date.now();
       if (ctrlCPress > 0 && now - ctrlCPress < 3000) {
@@ -91,112 +93,177 @@ const App: React.FC = () => {
       setCtrlCPress(0);
     }
 
-    // Don't handle text input when SearchPrompt is active
-    // (search mode without config overlay)
-    if (mode === 'search' && !showConfig) return;
+    // ── Config overlay: only allow Esc / q to close ──────────
+    if (showConfig) {
+      if (key.escape || input === '\x1b' || ((input === 'q' || input === 'Q') && !key.ctrl && !key.meta)) {
+        setShowConfig(false);
+      }
+      return;
+    }
 
-    // Back navigation: Esc or q (Esc may be intercepted by IDE terminal)
-    const isBack = key.escape || input === '\x1b' || ((input === 'q' || input === 'Q') && !key.ctrl && !key.meta);
-    if (isBack && !showConfig) {
+    // ── Esc — always back (clear buffer first) ───────────────
+    if (key.escape || input === '\x1b') {
+      setInputBuffer('');
       if (mode === 'welcome') { process.exit(0); return; }
-      if (mode === 'search') { setMode('welcome'); setSearchQuery(''); return; }
-      if (mode === 'list') { setMode('search'); setSearchQuery(''); return; }
+      if (mode === 'list') { setMode('welcome'); return; }
       if (mode === 'detail') { setMode('list'); return; }
-      if (mode === 'error') { setMode('search'); setError(null); return; }
-      if (mode === 'loading' || mode === 'translating') { abortRef.current = true; setMode('welcome'); return; }
-      return;
-    }
-    if (isBack && showConfig) { setShowConfig(false); return; }
-
-    // In error mode, any other key goes to search
-    if (mode === 'error' && !showConfig) {
-      if (input === '/') { setShowConfig(true); return; }
-      setMode('search');
-      setSearchQuery('');
-      setError(null);
+      if (mode === 'error') { setMode('welcome'); setError(null); return; }
+      if (mode === 'loading') { abortRef.current = true; setMode('welcome'); return; }
       return;
     }
 
-    // / - config (only in welcome and list modes)
-    if (input === '/' && !showConfig) {
-      if (mode === 'welcome' || mode === 'list') {
-        setShowConfig(true);
+    // ── Backspace / Delete — always modify buffer ────────────
+    if (key.backspace || key.delete) {
+      setInputBuffer(prev => prev.slice(0, -1));
+      return;
+    }
+
+    // ── Enter with buffer → search from any mode ─────────────
+    if (key.return && inputBuffer.trim()) {
+      const query = inputBuffer.trim();
+      setInputBuffer('');
+
+      // Check for slash commands
+      const cmd = query.toLowerCase();
+      if (cmd === '/robotics' || cmd === '/r') {
+        addToHistory(query);
+        setSearchQuery('快捷查询: 机器人领域');
+        handleQuickSearch(presets.robotics);
+        return;
       }
-      return;
-    }
-
-    // Quick presets on welcome (ignore if ctrl/meta held)
-    if (mode === 'welcome' && !key.ctrl && !key.meta) {
-      if (input === 'r' || input === 'R') { handleQuickSearch(presets.robotics); return; }
-      if (input === 'a' || input === 'A') { handleQuickSearch(presets.ai); return; }
-      if (input === 'c' || input === 'C') { handleQuickSearch(presets.cv); return; }
-    }
-
-    // Enter on welcome → go to search
-    if (key.return && mode === 'welcome') {
-      setMode('search');
-      return;
-    }
-
-    // Number keys - select paper from list
-    if (mode === 'list' && !key.ctrl && !key.meta) {
-      const num = parseInt(input);
-      if (num >= 1 && num <= papers.length) {
-        setSelectedPaper(papers[num - 1]);
-        setMode('detail');
+      if (cmd === '/ai' || cmd === '/a') {
+        addToHistory(query);
+        setSearchQuery('快捷查询: AI/ML');
+        handleQuickSearch(presets.ai);
+        return;
       }
+      if (cmd === '/cv' || cmd === '/c') {
+        addToHistory(query);
+        setSearchQuery('快捷查询: 计算机视觉');
+        handleQuickSearch(presets.cv);
+        return;
+      }
+
+      setSearchQuery(query);
+      handleSearch(query);
       return;
     }
 
-    // s - speak in detail view
-    if (input === 's' && mode === 'detail' && selectedPaper && !key.ctrl) {
-      handleSpeak(selectedPaper.summary || selectedPaper.title);
-      return;
+    // ── Keys that only work when buffer is EMPTY ────────────
+    if (!inputBuffer) {
+      // q — back navigation
+      if ((input === 'q' || input === 'Q') && !key.ctrl && !key.meta) {
+        if (mode === 'welcome') { process.exit(0); return; }
+        if (mode === 'list') { setMode('welcome'); return; }
+        if (mode === 'detail') { setMode('list'); return; }
+        if (mode === 'error') { setMode('welcome'); setError(null); return; }
+        if (mode === 'loading') { abortRef.current = true; setMode('welcome'); return; }
+        return;
+      }
+
+      // / — config (welcome, list, detail)
+      if (input === '/') {
+        if (mode === 'welcome' || mode === 'list' || mode === 'detail') {
+          setShowConfig(true);
+        }
+        return;
+      }
+
+      // Number keys in home/welcome — select from history
+      if (mode === 'welcome' && /^[1-9]$/.test(input)) {
+        const num = parseInt(input);
+        if (num >= 1 && num <= Math.min(searchHistory.length, 8)) {
+          const query = searchHistory[num - 1];
+          setSearchQuery(query);
+          setInputBuffer('');
+          handleSearch(query);
+        }
+        return;
+      }
+
+      // Enter on welcome — start search with keyboard (visual hint)
+      if (key.return && mode === 'welcome') {
+        // Just focus stays on the bar — nothing to do
+        return;
+      }
+
+      // Number keys in list mode — handled by PaperList component
+      // (expand abstract on first press, select on second)
+
+      // s — speak in detail view
+      if ((input === 's' || input === 'S') && mode === 'detail' && selectedPaper && !key.ctrl && !key.meta) {
+        handleSpeak(selectedPaper.summary || selectedPaper.title);
+        return;
+      }
+
+      // f — save/favorite in detail view
+      if ((input === 'f' || input === 'F') && mode === 'detail' && selectedPaper && !key.ctrl && !key.meta) {
+        handleSave(selectedPaper);
+        return;
+      }
+
+      // b — back from detail
+      if ((input === 'b' || input === 'B') && mode === 'detail' && !key.ctrl && !key.meta) {
+        setMode('list');
+        return;
+      }
+
+      // Error mode: any other key clears error
+      if (mode === 'error') {
+        setMode('welcome');
+        setError(null);
+        return;
+      }
     }
 
-    // f - save/favorite in detail view
-    if (input === 'f' && mode === 'detail' && selectedPaper && !key.ctrl) {
-      handleSave(selectedPaper);
+    // ── Regular character input → append to buffer ──────────
+    // In list mode, single digits are reserved for paper selection
+    if (mode === 'list' && /^[1-9]$/.test(input) && !inputBuffer) {
       return;
     }
-
-    // b - back from detail
-    if (input === 'b' && mode === 'detail' && !key.ctrl) {
-      setMode('list');
-      return;
+    // In detail mode, j/k/Tab/arrows/Space are used for section navigation
+    if (mode === 'detail' && !inputBuffer) {
+      if (key.tab || key.upArrow || key.downArrow || key.return || input === ' ') return;
+      if (input === 'j' || input === 'J' || input === 'k' || input === 'K') return;
+    }
+    if (
+      input &&
+      input.length > 0 &&
+      !key.ctrl &&
+      !key.meta &&
+      !key.tab &&
+      !key.upArrow &&
+      !key.downArrow &&
+      !key.leftArrow &&
+      !key.rightArrow &&
+      !key.return
+    ) {
+      setInputBuffer(prev => prev + input);
     }
   });
+
+  // ── Search history helper ──────────────────────────────────────
+  const addToHistory = (query: string) => {
+    setSearchHistory(prev => {
+      const deduped = prev.filter(q => q !== query);
+      return [query, ...deduped].slice(0, 12);
+    });
+  };
 
   // ── Search handlers ─────────────────────────────────────────────
 
   const handleSearch = async (query: string): Promise<void> => {
+    addToHistory(query);
     setMode('loading');
     setLoadingMessage('搜索中...');
     setCategoryProgress([]);
     setError(null);
 
     try {
-      let term = query;
-      const isChinese = /[一-龥]/.test(query);
-
-      if (isChinese) {
-        setMode('translating');
-        const result = await translateQuery(query, apiKey);
-        term = result.text;
-
-        if (!result.translated && !apiKey) {
-          setError('未配置 API Key，中文翻译不可用。请设置 MINIMAX_API_KEY 或使用英文关键词/快捷查询（按 r）。');
-          setMode('error');
-          return;
-        }
-      }
-
-      setMode('loading');
-      const results = await searchArxiv(term, config.maxPapers);
+      const results = await searchArxiv(query, config.maxPapers);
       setPapers(results);
-      // If no results, go back to search mode so user can retry immediately
       if (results.length === 0) {
-        setError('未找到论文。arXiv 可能限速，请稍后重试，或按 r 快速查询。');
+        setError('未找到论文。arXiv 可能限速，请稍后重试。');
         setMode('error');
       } else {
         setMode('list');
@@ -213,14 +280,12 @@ const App: React.FC = () => {
     setLoadingMessage(`${preset.label} · 查询中`);
     setPapers([]);
 
-    // Show animated progress for each category
     const initialProgress: CategoryProgress[] = preset.categories.map(cat => ({
       category: cat,
       status: 'pending',
     }));
     setCategoryProgress(initialProgress);
 
-    // Animate progress: mark categories as fetching one by one
     let animTimer: ReturnType<typeof setInterval> | null = null;
     let step = 0;
     animTimer = setInterval(() => {
@@ -239,7 +304,6 @@ const App: React.FC = () => {
       const results = await quickSearch(preset.id, config.maxPapers * 2);
 
       if (animTimer) clearInterval(animTimer);
-      // Mark all as done
       setCategoryProgress(preset.categories.map(cat => {
         const catPapers = results.filter(p =>
           p.categories.some(c => c.toLowerCase().startsWith(cat.toLowerCase().split('.')[0]))
@@ -250,11 +314,10 @@ const App: React.FC = () => {
       await new Promise(r => setTimeout(r, 300));
 
       if (results.length === 0) {
-        // Fallback: try a keyword search
         setLoadingMessage('快捷查询无结果，尝试关键词搜索...');
         const fallback = await searchArxiv(preset.id, config.maxPapers);
         if (fallback.length === 0) {
-          setError('未找到论文。arXiv 可能限速，请稍后重试，或手动输入英文关键词。');
+          setError('未找到论文。arXiv 可能限速，请稍后重试。');
           setMode('error');
         } else {
           setPapers(fallback);
@@ -286,7 +349,6 @@ const App: React.FC = () => {
 
   const handleConfigUpdate = async (key: keyof AppConfig | 'apiKey', value: any): Promise<void> => {
     if (key === 'apiKey') {
-      // Save API key to backend config file
       try {
         const { updateConfig } = await import('./services/minimax');
         await updateConfig({ api_key: value } as any);
@@ -300,16 +362,36 @@ const App: React.FC = () => {
     setShowConfig(false);
   };
 
+  // ── Breadcrumb ──────────────────────────────────────────────────
+  const getLocation = (): string => {
+    if (showConfig) return '首页 > 配置';
+    switch (mode) {
+      case 'welcome': return '首页';
+      case 'loading': return '首页 > 搜索中';
+      case 'list': return '首页 > 搜索结果';
+      case 'detail':
+        if (selectedPaper) {
+          const t = selectedPaper.title;
+          return `首页 > 搜索结果 > ${t.length > 40 ? t.slice(0, 40) + '...' : t}`;
+        }
+        return '首页 > 搜索结果 > 论文详情';
+      case 'error': return '首页 > 提示';
+    }
+  };
+
   // ── Render ──────────────────────────────────────────────────────
 
   if (showConfig) {
     return (
-      <ConfigMenu
-        config={config}
-        apiKey={apiKey}
-        onUpdate={handleConfigUpdate}
-        onClose={() => setShowConfig(false)}
-      />
+      <Box flexDirection="column">
+        <ConfigMenu
+          config={config}
+          apiKey={apiKey}
+          onUpdate={handleConfigUpdate}
+          onClose={() => setShowConfig(false)}
+        />
+        <PersistentInputBar buffer={inputBuffer} location={getLocation()} />
+      </Box>
     );
   }
 
@@ -318,26 +400,22 @@ const App: React.FC = () => {
   switch (mode) {
     case 'welcome':
       content = (
-        <Welcome
-          onStart={() => setMode('search')}
-          onQuickSearch={(id) => presets[id] && handleQuickSearch(presets[id])}
-        />
-      );
-      break;
-
-    case 'search':
-      content = (
-        <SearchPrompt
-          value={searchQuery}
-          onChange={setSearchQuery}
-          onSubmit={(query) => {
-            const cmd = query.toLowerCase();
-            if (cmd === '/robotics' || cmd === '/r') { handleQuickSearch(presets.robotics); return; }
-            if (cmd === '/ai' || cmd === '/a') { handleQuickSearch(presets.ai); return; }
-            if (cmd === '/cv' || cmd === '/c') { handleQuickSearch(presets.cv); return; }
+        <Home
+          onStart={() => setMode('welcome')}
+          onQuickSearch={(id) => {
+            if (presets[id]) {
+              addToHistory(`/${id}`);
+              setSearchQuery(`快捷查询: ${presets[id].label}`);
+              setInputBuffer('');
+              handleQuickSearch(presets[id]);
+            }
+          }}
+          history={searchHistory}
+          onHistorySelect={(query) => {
+            setSearchQuery(query);
+            setInputBuffer('');
             handleSearch(query);
           }}
-          onCancel={() => setMode('welcome')}
         />
       );
       break;
@@ -347,15 +425,12 @@ const App: React.FC = () => {
         <LoadingScreen
           message={loadingMessage}
           categories={categoryProgress}
-        />
-      );
-      break;
-
-    case 'translating':
-      content = (
-        <LoadingScreen
-          message="翻译查询..."
-          categories={[{ category: '中译英', status: 'fetching' }]}
+          hints={[
+            '中文查询会自动翻译为英文关键词搜索',
+            '搜索较慢时可减少最大论文数（按 / 进入配置）',
+            '使用 /robotics、/ai、/cv 可快捷查询分类',
+            'arXiv API 有速率限制，频繁搜索可能暂时无结果',
+          ]}
         />
       );
       break;
@@ -389,7 +464,7 @@ const App: React.FC = () => {
           </Box>
           <Text>{error}</Text>
           <Box marginTop={1}>
-            <Text dimColor>按任意键重新搜索    q 返回首页</Text>
+            <Text dimColor>按任意键返回首页    q 退出</Text>
           </Box>
         </Box>
       );
@@ -398,7 +473,13 @@ const App: React.FC = () => {
 
   return (
     <Box flexDirection="column">
+      {searchQuery && mode !== 'welcome' && (
+        <Box paddingLeft={1} paddingRight={1} marginBottom={1}>
+          <Text dimColor>❯ {searchQuery}</Text>
+        </Box>
+      )}
       {content}
+      <PersistentInputBar buffer={inputBuffer} location={getLocation()} />
       {ctrlCPress > 0 && (Date.now() - ctrlCPress < 3000) && (
         <Box>
           <Text dimColor>  再次按 Ctrl+C 退出</Text>

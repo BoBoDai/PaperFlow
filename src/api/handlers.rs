@@ -108,6 +108,7 @@ pub async fn health() -> &'static str {
 }
 
 /// Search papers from arXiv
+/// Chinese queries are automatically translated to English keywords via LLM
 pub async fn search_papers(
     State(state): State<ApiState>,
     Query(query): Query<SearchQuery>,
@@ -115,7 +116,44 @@ pub async fn search_papers(
     let max = query.max_results.unwrap_or(5);
     let client = ArxivClient::new();
 
-    match client.search(&query.q, max).await {
+    // If query contains Chinese, use LLM to extract English keywords
+    let search_term = {
+        if query.q.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)) {
+            let config = state.config.read().await;
+            if config.api_key.is_some() {
+                let llm = create_llm(&config);
+                let prompt = format!(
+                    "Extract concise English academic keywords from this Chinese query for searching arXiv papers. Return ONLY the English keywords, no explanation, no punctuation.\n\nChinese query: {}",
+                    query.q
+                );
+                // Drop config lock before LLM call
+                drop(config);
+                match llm.complete(&prompt).await {
+                    Ok(translated) => {
+                        let cleaned = translated
+                            .split("</think>")
+                            .last()
+                            .unwrap_or(&translated)
+                            .trim()
+                            .to_string();
+                        tracing::info!("中文查询 '{}' → 关键词 '{}'", query.q, cleaned);
+                        cleaned
+                    }
+                    Err(e) => {
+                        tracing::warn!("关键词提取失败，使用原始查询: {}", e);
+                        query.q.clone()
+                    }
+                }
+            } else {
+                tracing::info!("未配置 API Key，中文查询直接搜索");
+                query.q.clone()
+            }
+        } else {
+            query.q.clone()
+        }
+    };
+
+    match client.search(&search_term, max).await {
         Ok(papers) => {
             let _config = state.config.read().await;
             let prefs = UserPreferences {
