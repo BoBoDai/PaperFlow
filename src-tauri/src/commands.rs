@@ -40,5 +40,6 @@ pub async fn summarize_paper(state: State<'_, AppState>, paper: Paper) -> IpcRes
 /// 自检：前端可以用它确认 IPC 链路通不通
 #[tauri::command]
 pub fn health() -> String {
+    tracing::info!("前端已连接 —— IPC 链路就绪");
     format!("paperflow {} 就绪", env!("CARGO_PKG_VERSION"))
 }
