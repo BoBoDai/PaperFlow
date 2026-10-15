@@ -1,0 +1,17 @@
+{
+  "name": "paperflow",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PaperFlow — 学术论文检索与分析",
+  "scripts": {
+    "dev": "pnpm -F @paperflow/ui dev",
+    "build": "pnpm -F @paperflow/ui build",
+    "typecheck": "pnpm -F @paperflow/ui typecheck",
+    "tauri": "tauri",
+    "app:dev": "tauri dev",
+    "app:build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.3"
+  }
+}

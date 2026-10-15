@@ -1,0 +1,18 @@
+[package]
+name = "paperflow-adapters"
+description = "PaperFlow 适配层 —— 与外部世界打交道"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+paperflow-core = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

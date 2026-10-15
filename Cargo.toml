@@ -1,0 +1,51 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/adapters", "crates/usecases", "src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["PaperFlow"]
+repository = "https://github.com/BoBoDai/PaperFlow"
+
+[workspace.dependencies]
+# --- 内部 crate ---
+paperflow-core = { path = "crates/core" }
+paperflow-adapters = { path = "crates/adapters" }
+paperflow-usecases = { path = "crates/usecases" }
+
+# --- 序列化 ---
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# --- 异步运行时 ---
+tokio = { version = "1", features = ["full"] }
+
+# --- HTTP ---
+reqwest = { version = "0.13", features = ["json"] }
+
+# --- 错误处理 ---
+thiserror = "2"
+anyhow = "1"
+
+# --- 时间 ---
+chrono = { version = "0.4", features = ["serde"] }
+
+# --- 日志 ---
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.dev]
+# 依赖用优化编译，自己的代码保持快速增量 —— 显著提升运行速度而不拖慢迭代
+opt-level = 0
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

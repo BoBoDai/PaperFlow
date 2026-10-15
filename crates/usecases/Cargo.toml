@@ -1,0 +1,17 @@
+[package]
+name = "paperflow-usecases"
+description = "PaperFlow 用例层 —— 编排，传输无关"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+paperflow-core = { workspace = true }
+paperflow-adapters = { workspace = true }
+
+tracing = { workspace = true }
+
+[dev-dependencies]
+chrono = { workspace = true }

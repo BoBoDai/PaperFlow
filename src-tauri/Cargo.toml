@@ -1,0 +1,28 @@
+[package]
+name = "paperflow-app"
+description = "PaperFlow 桌面应用（Tauri 壳 + IPC）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+# Tauri v2 约定：逻辑放 lib，main.rs 只做入口（为了将来能复用到移动端）
+[lib]
+name = "paperflow_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+paperflow-core = { workspace = true }
+paperflow-adapters = { workspace = true }
+paperflow-usecases = { workspace = true }
+
+tauri = { version = "2", features = [] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
