@@ -87,7 +87,7 @@ pnpm typecheck        # 前端类型检查
 
 尚未实现（下一步）：
 
-- [ ] `adapters/arxiv.rs` —— 现在是 `StubArxivClient`，返回固定样例数据
+- [x] `adapters/arxiv.rs` —— 真实 arXiv Atom API 客户端（HTTP + XML 解析）
 - [ ] `adapters/llm.rs` —— 现在是 `StubLlmProvider`，返回占位文本
 - [ ] `adapters/storage.rs` —— 只有 trait，没有 SQLite 实现
 - [ ] 后台调度器（定时抓取 + 通知）

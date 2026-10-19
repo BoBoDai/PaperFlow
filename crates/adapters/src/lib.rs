@@ -13,6 +13,6 @@ pub mod arxiv;
 pub mod llm;
 pub mod storage;
 
-pub use arxiv::{ArxivClient, StubArxivClient};
+pub use arxiv::{ArxivClient, ArxivHttpClient};
 pub use llm::{LlmProvider, StubLlmProvider};
 pub use storage::PaperStore;
