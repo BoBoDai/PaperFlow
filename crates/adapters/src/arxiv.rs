@@ -78,20 +78,55 @@ impl PaperSearch for ArxivHttpClient {
             return Ok(Vec::new());
         }
 
-        let limit = limit.clamp(1, MAX_RESULTS).to_string();
         // Quote the free-text query so multi-word phrases stay together.
         let search_query = format!("all:\"{}\"", query.replace('"', " "));
-        tracing::debug!(search_query, limit, "querying arXiv");
+        self.fetch(&search_query, 0, limit, false).await
+    }
+
+    async fn feed(&self, interests: &[String], offset: usize, limit: usize) -> Result<Vec<Paper>> {
+        let Some(search_query) = build_feed_query(interests) else {
+            return Ok(Vec::new());
+        };
+
+        self.fetch(&search_query, offset, limit, true).await
+    }
+}
+
+impl ArxivHttpClient {
+    async fn fetch(
+        &self,
+        search_query: &str,
+        offset: usize,
+        limit: usize,
+        newest_first: bool,
+    ) -> Result<Vec<Paper>> {
+        let limit_num = limit.clamp(1, MAX_RESULTS);
+
+        tracing::debug!(
+            search_query,
+            offset,
+            limit = limit_num,
+            newest_first,
+            "querying arXiv"
+        );
+
+        let mut params = vec![
+            ("search_query", search_query.to_string()),
+            ("start", offset.to_string()),
+            ("max_results", limit_num.to_string()),
+        ];
+
+        if newest_first {
+            params.push(("sortBy", "submittedDate".to_string()));
+            params.push(("sortOrder", "descending".to_string()));
+        }
+
         self.throttle().await;
 
         let response = self
             .http
             .get(&self.endpoint)
-            .query(&[
-                ("search_query", search_query.as_str()),
-                ("start", "0"),
-                ("max_results", limit.as_str()),
-            ])
+            .query(&params)
             .send()
             .await
             .map_err(|e| request_error("arXiv request failed", e))?;
@@ -115,6 +150,28 @@ impl PaperSearch for ArxivHttpClient {
 
         parse_feed(&body)
     }
+}
+
+fn build_feed_query(interests: &[String]) -> Option<String> {
+    let terms: Vec<String> = interests
+        .iter()
+        .map(|interest| sanitize_term(interest))
+        .filter(|interest| !interest.is_empty())
+        .map(|interest| format!("all:\"{interest}\""))
+        .collect();
+
+    match terms.len() {
+        0 => None,
+        1 => Some(terms[0].clone()),
+        _ => Some(format!("({})", terms.join(" OR "))),
+    }
+}
+
+fn sanitize_term(raw: &str) -> String {
+    raw.replace(['"', '\\'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Parse an Atom feed returned by the arXiv API.
@@ -320,6 +377,38 @@ mod tests {
     #[test]
     fn rejects_malformed_xml() {
         assert!(matches!(parse_feed("<feed>"), Err(Error::Parse(_))));
+    }
+
+    #[test]
+    fn feed_query_joins_interests_with_or() {
+        assert_eq!(
+            build_feed_query(&[
+                "large language models".into(),
+                " diffusion models ".into(),
+                "".into(),
+            ]),
+            Some(
+                r#"(all:"large language models" OR all:"diffusion models")"#.to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn feed_query_sanitizes_and_handles_single_interest() {
+        assert_eq!(
+            build_feed_query(&["diffusion models".into()]),
+            Some(r#"all:"diffusion models""#.to_string())
+        );
+        assert_eq!(
+            build_feed_query(&[r#"a "quoted" \ topic"#.into()]),
+            Some(r#"all:"a quoted topic""#.to_string())
+        );
+    }
+
+    #[test]
+    fn feed_query_is_none_without_interests() {
+        assert_eq!(build_feed_query(&[]), None);
+        assert_eq!(build_feed_query(&[" ".into()]), None);
     }
 
     #[tokio::test]

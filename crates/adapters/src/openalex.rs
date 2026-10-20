@@ -8,17 +8,22 @@
 //! reconstructed here.
 
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, NaiveDate, Utc};
 use paperflow_core::{Error, Paper, Result, Source};
 use serde::Deserialize;
+use tokio::sync::Mutex;
 
 use crate::search::{PaperSearch, request_error};
 
 const OPENALEX_API: &str = "https://api.openalex.org/works";
 
 const MAX_RESULTS: usize = 100;
+const MAX_OFFSET: usize = 10_000;
+
+/// OpenAlex rate-limits bursts; keep requests at least one second apart.
+const MIN_REQUEST_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Keep the payload small; nested objects are still returned in full.
 const SELECT_FIELDS: &str = "id,title,display_name,publication_date,publication_year,\
@@ -28,6 +33,7 @@ const SELECT_FIELDS: &str = "id,title,display_name,publication_date,publication_
 pub struct OpenAlexHttpClient {
     http: reqwest::Client,
     endpoint: String,
+    last_request: Mutex<Option<Instant>>,
 }
 
 impl OpenAlexHttpClient {
@@ -46,28 +52,30 @@ impl OpenAlexHttpClient {
         Ok(Self {
             http,
             endpoint: endpoint.into(),
+            last_request: Mutex::new(None),
         })
     }
-}
 
-impl PaperSearch for OpenAlexHttpClient {
-    async fn search(&self, query: &str, limit: usize) -> Result<Vec<Paper>> {
-        let query = query.trim();
-        if query.is_empty() {
-            return Ok(Vec::new());
+    async fn throttle(&self) {
+        let mut last_request = self.last_request.lock().await;
+
+        if let Some(previous) = *last_request {
+            let elapsed = previous.elapsed();
+            if elapsed < MIN_REQUEST_INTERVAL {
+                tokio::time::sleep(MIN_REQUEST_INTERVAL - elapsed).await;
+            }
         }
 
-        let limit = limit.clamp(1, MAX_RESULTS).to_string();
-        tracing::debug!(query, limit, "querying OpenAlex");
+        *last_request = Some(Instant::now());
+    }
+
+    async fn send(&self, params: Vec<(&str, String)>) -> Result<Vec<Paper>> {
+        self.throttle().await;
 
         let response = self
             .http
             .get(&self.endpoint)
-            .query(&[
-                ("search", query),
-                ("per-page", limit.as_str()),
-                ("select", SELECT_FIELDS),
-            ])
+            .query(&params)
             .send()
             .await
             .map_err(|e| request_error("OpenAlex request failed", e))?;
@@ -89,6 +97,88 @@ impl PaperSearch for OpenAlexHttpClient {
 
         parse_works(&body)
     }
+}
+
+impl PaperSearch for OpenAlexHttpClient {
+    async fn search(&self, query: &str, limit: usize) -> Result<Vec<Paper>> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let limit = limit.clamp(1, MAX_RESULTS).to_string();
+        tracing::debug!(query, limit = %limit, "querying OpenAlex");
+
+        self.send(vec![
+            ("search", query.to_string()),
+            ("per-page", limit),
+            ("select", SELECT_FIELDS.to_string()),
+        ])
+        .await
+    }
+
+    async fn feed(&self, interests: &[String], offset: usize, limit: usize) -> Result<Vec<Paper>> {
+        if offset >= MAX_OFFSET {
+            tracing::debug!(offset, "OpenAlex feed offset past pagination cap");
+            return Ok(Vec::new());
+        }
+
+        let limit_num = limit.clamp(1, MAX_RESULTS);
+        let today = Utc::now().date_naive();
+        let Some(filter) = build_feed_filter(interests, today) else {
+            return Ok(Vec::new());
+        };
+
+        let page = (offset / limit_num + 1).to_string();
+        tracing::debug!(
+            filter = %filter,
+            page = %page,
+            limit = limit_num,
+            "querying OpenAlex feed"
+        );
+
+        self.send(vec![
+            ("filter", filter),
+            ("sort", "publication_date:desc".to_string()),
+            ("per-page", limit_num.to_string()),
+            ("page", page),
+            ("select", SELECT_FIELDS.to_string()),
+        ])
+        .await
+    }
+}
+
+fn build_feed_filter(interests: &[String], today: NaiveDate) -> Option<String> {
+    let terms: Vec<String> = interests
+        .iter()
+        .map(|interest| sanitize_filter_term(interest))
+        .filter(|interest| !interest.is_empty())
+        .collect();
+
+    if terms.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "title_and_abstract.search:{},to_publication_date:{}",
+        terms.join("|"),
+        today.format("%Y-%m-%d"),
+    ))
+}
+
+fn sanitize_filter_term(raw: &str) -> String {
+    raw.chars()
+        .map(|c| {
+            if matches!(c, ',' | '|' | ':') || c.is_control() {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Parse a Works API response into [`Paper`] values.
@@ -435,6 +525,45 @@ mod tests {
     #[test]
     fn rejects_malformed_json() {
         assert!(matches!(parse_works("not json"), Err(Error::Parse(_))));
+    }
+
+    #[test]
+    fn feed_filter_joins_terms_and_caps_future_dates() {
+        let today = NaiveDate::from_ymd_opt(2026, 10, 20).expect("valid date");
+        let filter = build_feed_filter(
+            &[
+                "large language models".into(),
+                " diffusion models ".into(),
+                "".into(),
+            ],
+            today,
+        )
+        .expect("filter should be built");
+
+        assert_eq!(
+            filter,
+            "title_and_abstract.search:large language models|diffusion models,\
+             to_publication_date:2026-10-20"
+        );
+    }
+
+    #[test]
+    fn feed_filter_strips_separators() {
+        let today = NaiveDate::from_ymd_opt(2026, 10, 20).expect("valid date");
+        let filter =
+            build_feed_filter(&["a,b|c:d".into()], today).expect("filter should be built");
+
+        assert_eq!(
+            filter,
+            "title_and_abstract.search:a b c d,to_publication_date:2026-10-20"
+        );
+    }
+
+    #[test]
+    fn feed_filter_is_none_without_interests() {
+        let today = NaiveDate::from_ymd_opt(2026, 10, 20).expect("valid date");
+        assert_eq!(build_feed_filter(&[], today), None);
+        assert_eq!(build_feed_filter(&["  ".into()], today), None);
     }
 
     #[tokio::test]

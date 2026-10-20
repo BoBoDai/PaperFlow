@@ -6,7 +6,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
-import type { LlmSettings, Paper, Summary } from '../types';
+import type { FeedPage, LlmSettings, Paper, Summary } from '../types';
 
 /** 在普通浏览器里跑（没经过 Tauri）时，invoke 会抛错 */
 export function isTauri(): boolean {
@@ -19,6 +19,14 @@ export async function health(): Promise<string> {
 
 export async function searchPapers(query: string, limit = 10): Promise<Paper[]> {
   return invoke<Paper[]>('search_papers', { query, limit });
+}
+
+export async function browseFeed(
+  interests: string[],
+  offset = 0,
+  limit = 12,
+): Promise<FeedPage> {
+  return invoke<FeedPage>('browse_feed', { interests, offset, limit });
 }
 
 export async function summarizePaper(paper: Paper): Promise<Summary> {

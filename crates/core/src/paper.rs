@@ -36,6 +36,14 @@ pub struct Paper {
     pub venue: Option<String>,
 }
 
+/// One page of the interest-based recent feed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FeedPage {
+    pub papers: Vec<Paper>,
+    /// True when the source returned a full page before deduplication.
+    pub has_more: bool,
+}
+
 impl Paper {
     /// 跨源去重用的键。
     ///

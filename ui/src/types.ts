@@ -31,6 +31,12 @@ export interface Summary {
   prompt_version: string;
 }
 
+/** 对应 `paperflow_core::FeedPage` */
+export interface FeedPage {
+  papers: Paper[];
+  has_more: boolean;
+}
+
 /** 对应 `src-tauri::settings::LlmProviderConfig` */
 export interface LlmProviderConfig {
   id: string;

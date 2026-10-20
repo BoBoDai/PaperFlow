@@ -12,6 +12,10 @@ use paperflow_core::{Error, Paper, Result};
 #[allow(async_fn_in_trait)]
 pub trait PaperSearch {
     async fn search(&self, query: &str, limit: usize) -> Result<Vec<Paper>>;
+
+    /// Fetch the newest papers matching any of `interests`, starting at `offset`.
+    async fn feed(&self, interests: &[String], offset: usize, limit: usize)
+    -> Result<Vec<Paper>>;
 }
 
 /// Flatten an error's source chain into one message. `Display` alone hides

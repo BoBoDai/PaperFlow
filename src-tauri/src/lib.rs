@@ -50,6 +50,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::search_papers,
+            commands::browse_feed,
             commands::summarize_paper,
             commands::health,
             commands::get_llm_settings,

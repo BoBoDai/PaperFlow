@@ -8,7 +8,7 @@
 
 use crate::settings::LlmSettings;
 use crate::AppState;
-use paperflow_core::{Paper, Summary};
+use paperflow_core::{FeedPage, Paper, Summary};
 use tauri::State;
 
 type IpcResult<T> = std::result::Result<T, String>;
@@ -28,6 +28,25 @@ pub async fn search_papers(
     state
         .app
         .search_papers(&query, limit.unwrap_or(10))
+        .await
+        .map_err(to_ipc)
+}
+
+/// 兴趣信息流：按最新发表时间返回一页论文
+#[tauri::command]
+pub async fn browse_feed(
+    state: State<'_, AppState>,
+    interests: Vec<String>,
+    offset: Option<usize>,
+    limit: Option<usize>,
+) -> IpcResult<FeedPage> {
+    state
+        .app
+        .browse_feed(
+            &interests,
+            offset.unwrap_or(0),
+            limit.unwrap_or(paperflow_usecases::FEED_DEFAULT_LIMIT),
+        )
         .await
         .map_err(to_ipc)
 }

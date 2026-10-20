@@ -16,7 +16,7 @@ pub mod paper;
 pub mod summary;
 
 pub use error::{Error, Result};
-pub use paper::{Paper, Source};
+pub use paper::{FeedPage, Paper, Source};
 pub use summary::Summary;
 
 /// True when the text contains Han characters.
