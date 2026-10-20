@@ -81,6 +81,24 @@ cargo clippy          # lint
 pnpm typecheck        # 前端类型检查
 ```
 
+## LLM 配置
+
+右上角「设置」是一个多服务商管理面板，可配置多个任意 OpenAI 兼容端点：
+
+- 左侧列表管理服务商，右侧编辑名称 / Base URL / API Key / 模型
+- 预设：DeepSeek（`https://api.deepseek.com` / `deepseek-chat`）、
+  OpenAI（`https://api.openai.com/v1` / `gpt-4o-mini`）
+- 「设为当前」决定中文查询翻译和论文分析使用哪个服务商
+- 保存后立即生效，无需重启
+
+配置保存在系统应用配置目录的 `settings.json`（macOS 为
+`~/Library/Application Support/com.paperflow.desktop/`，Unix 权限 0600），
+不会进入仓库，也不会写入日志；旧版单服务商配置会自动迁移。
+
+- 英文查询直接检索 arXiv / OpenAlex
+- 中文查询先由当前服务商转成英文关键词；未配置 key 时会明确提示
+- 论文分析（右侧「LLM 分析」）使用当前服务商
+
 ## 当前状态
 
 骨架已通：**`pnpm app:dev` 开窗、`pnpm app:build` 出安装包、IPC 链路贯通。**
@@ -89,7 +107,7 @@ pnpm typecheck        # 前端类型检查
 
 - [x] `adapters/arxiv.rs` —— 真实 arXiv Atom API 客户端（HTTP + XML 解析）
 - [x] `adapters/openalex.rs` —— OpenAlex 回退源，arXiv 限流或无结果时自动接管
-- [ ] `adapters/llm.rs` —— 现在是 `StubLlmProvider`，返回占位文本
+- [x] `adapters/llm.rs` —— DeepSeek 客户端（OpenAI 兼容）+ 多服务商设置页
 - [ ] `adapters/storage.rs` —— 只有 trait，没有 SQLite 实现
 - [ ] 后台调度器（定时抓取 + 通知）
 - [ ] `ui/src/types.ts` 是手写的 Rust 类型镜像，应该用 ts-rs 生成

@@ -18,3 +18,25 @@ pub mod summary;
 pub use error::{Error, Result};
 pub use paper::{Paper, Source};
 pub use summary::Summary;
+
+/// True when the text contains Han characters.
+///
+/// Used to decide whether a search query needs LLM translation before it is
+/// sent to the English-language paper sources.
+pub fn contains_cjk(text: &str) -> bool {
+    text.chars()
+        .any(|c| matches!(c as u32, 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_han_characters() {
+        assert!(contains_cjk("扩散模型"));
+        assert!(contains_cjk("diffusion 模型"));
+        assert!(!contains_cjk("diffusion models"));
+        assert!(!contains_cjk(""));
+    }
+}

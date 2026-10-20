@@ -6,6 +6,7 @@
 //! 错误一律转成 String 跨 IPC，且**不做任何降级** —— 失败就让前端知道，
 //! 不许返回空结果假装成功。
 
+use crate::settings::LlmSettings;
 use crate::AppState;
 use paperflow_core::{Paper, Summary};
 use tauri::State;
@@ -35,6 +36,27 @@ pub async fn search_papers(
 #[tauri::command]
 pub async fn summarize_paper(state: State<'_, AppState>, paper: Paper) -> IpcResult<Summary> {
     state.app.summarize(&paper).await.map_err(to_ipc)
+}
+
+/// 读取当前 LLM 设置（多服务商列表 + 当前使用的服务商）
+#[tauri::command]
+pub fn get_llm_settings(state: State<'_, AppState>) -> IpcResult<LlmSettings> {
+    Ok(state.settings.current())
+}
+
+/// 保存 LLM 设置。API key 只写入本机配置文件，不写日志。
+#[tauri::command]
+pub fn save_llm_settings(
+    state: State<'_, AppState>,
+    settings: LlmSettings,
+) -> IpcResult<LlmSettings> {
+    let saved = state.settings.save(&settings)?;
+    tracing::info!(
+        providers = saved.providers.len(),
+        active_id = %saved.active_id,
+        "LLM settings updated"
+    );
+    Ok(saved)
 }
 
 /// 自检：前端可以用它确认 IPC 链路通不通

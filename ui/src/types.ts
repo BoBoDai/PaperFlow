@@ -30,3 +30,18 @@ export interface Summary {
   model: string;
   prompt_version: string;
 }
+
+/** 对应 `src-tauri::settings::LlmProviderConfig` */
+export interface LlmProviderConfig {
+  id: string;
+  name: string;
+  api_key: string;
+  base_url: string;
+  model: string;
+}
+
+/** 对应 `src-tauri::settings::LlmSettings` */
+export interface LlmSettings {
+  providers: LlmProviderConfig[];
+  active_id: string;
+}

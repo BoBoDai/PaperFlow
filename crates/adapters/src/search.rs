@@ -1,5 +1,7 @@
 //! Shared search-source abstraction.
 
+use std::error::Error as StdError;
+
 use paperflow_core::{Error, Paper, Result};
 
 /// A keyword search source.
@@ -12,11 +14,14 @@ pub trait PaperSearch {
     async fn search(&self, query: &str, limit: usize) -> Result<Vec<Paper>>;
 }
 
-/// Include reqwest's underlying cause; its `Display` alone hides transport
-/// details such as proxy, DNS, or TLS failures.
-pub(crate) fn request_error(context: &str, error: reqwest::Error) -> Error {
+/// Flatten an error's source chain into one message. `Display` alone hides
+/// transport details such as proxy, DNS, or TLS failures.
+pub(crate) fn describe_error(
+    context: &str,
+    error: &(dyn StdError + 'static),
+) -> String {
     let mut message = format!("{context}: {error}");
-    let mut source = std::error::Error::source(&error);
+    let mut source = error.source();
 
     while let Some(cause) = source {
         message.push_str(": ");
@@ -24,5 +29,9 @@ pub(crate) fn request_error(context: &str, error: reqwest::Error) -> Error {
         source = cause.source();
     }
 
-    Error::Network(message)
+    message
+}
+
+pub(crate) fn request_error(context: &str, error: reqwest::Error) -> Error {
+    Error::Network(describe_error(context, &error))
 }
