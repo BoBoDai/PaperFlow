@@ -24,7 +24,7 @@
 └──────────────────┬──────────────────────────┘
 ┌──────────────────▼──────────────────────────┐
 │  crates/core/       纯逻辑，零 IO            │  可纯单测
-│  crates/adapters/   外部世界                 │  arXiv / LLM / 存储
+│  crates/adapters/   外部世界                 │  arXiv / OpenAlex / LLM / 存储
 └─────────────────────────────────────────────┘
 ```
 
@@ -88,6 +88,7 @@ pnpm typecheck        # 前端类型检查
 尚未实现（下一步）：
 
 - [x] `adapters/arxiv.rs` —— 真实 arXiv Atom API 客户端（HTTP + XML 解析）
+- [x] `adapters/openalex.rs` —— OpenAlex 回退源，arXiv 限流或无结果时自动接管
 - [ ] `adapters/llm.rs` —— 现在是 `StubLlmProvider`，返回占位文本
 - [ ] `adapters/storage.rs` —— 只有 trait，没有 SQLite 实现
 - [ ] 后台调度器（定时抓取 + 通知）

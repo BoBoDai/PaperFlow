@@ -121,6 +121,7 @@ export default function App() {
               <p className="meta">
                 {selected.authors.join(', ')}
                 {selected.venue && ` · ${selected.venue}`}
+                {` · 来源 ${selected.source}`}
               </p>
               <div className="tags">
                 {selected.categories.map((c) => (

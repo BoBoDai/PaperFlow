@@ -6,7 +6,7 @@
  * 在那之前：Rust 是唯一真相来源，这里只做镜像。
  */
 
-export type Source = 'arxiv' | 'semantic_scholar';
+export type Source = 'arxiv' | 'semantic_scholar' | 'openalex';
 
 /** 对应 `paperflow_core::Paper` */
 export interface Paper {

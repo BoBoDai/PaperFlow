@@ -5,12 +5,12 @@
 
 mod commands;
 
-use paperflow_adapters::{ArxivHttpClient, StubLlmProvider};
+use paperflow_adapters::{ArxivHttpClient, OpenAlexHttpClient, StubLlmProvider};
 use paperflow_usecases::App;
 
 /// 跨 IPC 共享的应用上下文
 pub struct AppState {
-    pub app: App<ArxivHttpClient, StubLlmProvider>,
+    pub app: App<ArxivHttpClient, StubLlmProvider, OpenAlexHttpClient>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -24,7 +24,8 @@ pub fn run() {
 
     // 适配器的装配点。接真实实现时，只改这两行。
     let arxiv = ArxivHttpClient::new().expect("初始化 arXiv 客户端失败");
-    let app = App::new(arxiv, StubLlmProvider);
+    let openalex = OpenAlexHttpClient::new().expect("初始化 OpenAlex 客户端失败");
+    let app = App::new(arxiv, StubLlmProvider, openalex);
 
     tauri::Builder::default()
         .manage(AppState { app })

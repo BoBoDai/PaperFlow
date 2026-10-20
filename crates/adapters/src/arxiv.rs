@@ -8,28 +8,29 @@
 //! [`Error::Parse`] rather than an empty result — the same
 //! no-silent-degradation rule that applies to LLM output.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use paperflow_core::{Error, Paper, Result, Source};
 use quick_xml::de::from_str;
 use serde::Deserialize;
+use tokio::sync::Mutex;
+
+use crate::search::{PaperSearch, request_error};
 
 const ARXIV_API: &str = "https://export.arxiv.org/api/query";
 
 /// arXiv caps the result page size; stay well inside the API limit.
 const MAX_RESULTS: usize = 100;
 
-/// Search papers by keyword.
-#[allow(async_fn_in_trait)]
-pub trait ArxivClient {
-    async fn search(&self, query: &str, limit: usize) -> Result<Vec<Paper>>;
-}
+/// arXiv asks clients to make at most one request every three seconds.
+const MIN_REQUEST_INTERVAL: Duration = Duration::from_secs(3);
 
 /// HTTP-backed client for the arXiv Atom API.
 pub struct ArxivHttpClient {
     http: reqwest::Client,
     endpoint: String,
+    last_request: Mutex<Option<Instant>>,
 }
 
 impl ArxivHttpClient {
@@ -40,23 +41,37 @@ impl ArxivHttpClient {
     /// Build a client against a custom endpoint. Useful for tests or mirrors.
     pub fn with_endpoint(endpoint: impl Into<String>) -> Result<Self> {
         let http = reqwest::Client::builder()
-            .user_agent(concat!(
-                "PaperFlow/",
-                env!("CARGO_PKG_VERSION"),
-                " (+https://github.com/BoBoDai/PaperFlow)"
-            ))
-            .timeout(Duration::from_secs(30))
+            .user_agent(concat!("PaperFlow/", env!("CARGO_PKG_VERSION")))
+            // arXiv normally answers in under a second. Keep this short so a
+            // dead route does not delay the OpenAlex fallback.
+            .timeout(Duration::from_secs(10))
             .build()
             .map_err(|e| Error::Network(format!("failed to build HTTP client: {e}")))?;
 
         Ok(Self {
             http,
             endpoint: endpoint.into(),
+            last_request: Mutex::new(None),
         })
+    }
+
+    /// Space requests out; arXiv returns HTTP 429 if clients call it faster
+    /// than once every three seconds.
+    async fn throttle(&self) {
+        let mut last_request = self.last_request.lock().await;
+
+        if let Some(previous) = *last_request {
+            let elapsed = previous.elapsed();
+            if elapsed < MIN_REQUEST_INTERVAL {
+                tokio::time::sleep(MIN_REQUEST_INTERVAL - elapsed).await;
+            }
+        }
+
+        *last_request = Some(Instant::now());
     }
 }
 
-impl ArxivClient for ArxivHttpClient {
+impl PaperSearch for ArxivHttpClient {
     async fn search(&self, query: &str, limit: usize) -> Result<Vec<Paper>> {
         let query = query.trim();
         if query.is_empty() {
@@ -67,6 +82,7 @@ impl ArxivClient for ArxivHttpClient {
         // Quote the free-text query so multi-word phrases stay together.
         let search_query = format!("all:\"{}\"", query.replace('"', " "));
         tracing::debug!(search_query, limit, "querying arXiv");
+        self.throttle().await;
 
         let response = self
             .http
@@ -78,14 +94,24 @@ impl ArxivClient for ArxivHttpClient {
             ])
             .send()
             .await
-            .map_err(|e| Error::Network(format!("arXiv request failed: {e}")))?
+            .map_err(|e| request_error("arXiv request failed", e))?;
+
+        if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(Error::Network(
+                "arXiv 限流（HTTP 429）：当前网络出口可能被 arXiv 限制，\
+                 请稍后重试或切换代理节点"
+                    .into(),
+            ));
+        }
+
+        let response = response
             .error_for_status()
-            .map_err(|e| Error::Network(format!("arXiv returned an error status: {e}")))?;
+            .map_err(|e| request_error("arXiv returned an error status", e))?;
 
         let body = response
             .text()
             .await
-            .map_err(|e| Error::Network(format!("failed to read arXiv response: {e}")))?;
+            .map_err(|e| request_error("failed to read arXiv response", e))?;
 
         parse_feed(&body)
     }

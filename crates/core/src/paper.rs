@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 pub enum Source {
     Arxiv,
     SemanticScholar,
+    OpenAlex,
 }
 
 impl Source {
@@ -16,6 +17,7 @@ impl Source {
         match self {
             Source::Arxiv => "arxiv",
             Source::SemanticScholar => "semantic_scholar",
+            Source::OpenAlex => "openalex",
         }
     }
 }

@@ -11,8 +11,12 @@
 
 pub mod arxiv;
 pub mod llm;
+pub mod openalex;
+pub mod search;
 pub mod storage;
 
-pub use arxiv::{ArxivClient, ArxivHttpClient};
+pub use arxiv::ArxivHttpClient;
 pub use llm::{LlmProvider, StubLlmProvider};
+pub use openalex::OpenAlexHttpClient;
+pub use search::PaperSearch;
 pub use storage::PaperStore;

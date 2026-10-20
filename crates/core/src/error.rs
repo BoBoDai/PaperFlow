@@ -27,4 +27,9 @@ pub enum Error {
 
     #[error("配置缺失或无效: {0}")]
     Config(String),
+
+    /// Every search source failed. The message keeps each source's error so
+    /// the caller can see why the fallback chain gave up.
+    #[error("所有检索源均失败: {0}")]
+    Sources(String),
 }
