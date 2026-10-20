@@ -44,6 +44,16 @@ pub struct FeedPage {
     pub has_more: bool,
 }
 
+/// Search results plus the query that was actually sent to the sources.
+///
+/// For Chinese input this is the translated English query, so the UI can show
+/// the user what was searched.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SearchResponse {
+    pub papers: Vec<Paper>,
+    pub query: String,
+}
+
 impl Paper {
     /// 跨源去重用的键。
     ///

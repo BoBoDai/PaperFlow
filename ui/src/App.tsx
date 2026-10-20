@@ -104,6 +104,7 @@ export default function App() {
   const [selectedInterest, setSelectedInterest] = useState<string | null>(null);
 
   const [query, setQuery] = useState('');
+  const [effectiveQuery, setEffectiveQuery] = useState<string | null>(null);
   const [papers, setPapers] = useState<Paper[]>([]);
   const [selected, setSelected] = useState<Paper | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -419,8 +420,11 @@ export default function App() {
     setError(null);
     setSelected(null);
     setSummary(null);
+    setEffectiveQuery(null);
     try {
-      setPapers(await searchPapers(q, 10));
+      const response = await searchPapers(q, 10);
+      setPapers(response.papers);
+      setEffectiveQuery(response.query);
     } catch (e: unknown) {
       setError(String(e));
       setPapers([]);
@@ -634,6 +638,14 @@ export default function App() {
               </button>
             </header>
           )}
+
+          {view === 'search' &&
+            effectiveQuery &&
+            effectiveQuery !== query.trim() && (
+              <p className="search-hint">
+                已按英文关键词搜索：<strong>{effectiveQuery}</strong>
+              </p>
+            )}
 
           {error && <div className="error">{error}</div>}
 

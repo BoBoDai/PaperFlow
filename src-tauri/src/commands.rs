@@ -8,7 +8,7 @@
 
 use crate::settings::LlmSettings;
 use crate::AppState;
-use paperflow_core::{FeedPage, Paper, Summary};
+use paperflow_core::{FeedPage, Paper, SearchResponse, Summary};
 use tauri::State;
 
 type IpcResult<T> = std::result::Result<T, String>;
@@ -24,7 +24,7 @@ pub async fn search_papers(
     state: State<'_, AppState>,
     query: String,
     limit: Option<usize>,
-) -> IpcResult<Vec<Paper>> {
+) -> IpcResult<SearchResponse> {
     state
         .app
         .search_papers(&query, limit.unwrap_or(10))

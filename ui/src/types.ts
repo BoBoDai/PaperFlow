@@ -31,6 +31,12 @@ export interface Summary {
   prompt_version: string;
 }
 
+/** 对应 `paperflow_core::SearchResponse` */
+export interface SearchResponse {
+  papers: Paper[];
+  query: string;
+}
+
 /** 对应 `paperflow_core::FeedPage` */
 export interface FeedPage {
   papers: Paper[];

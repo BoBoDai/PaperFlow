@@ -16,7 +16,10 @@
 //! ```
 
 use paperflow_adapters::{LlmProvider, PaperSearch};
-use paperflow_core::{contains_cjk, Error, FeedPage, Paper, Result, Summary};
+use paperflow_core::{
+    contains_cjk, translate_query_locally, Error, FeedPage, Paper, Result, SearchResponse,
+    Summary,
+};
 
 /// Default page size for the interest feed.
 pub const FEED_DEFAULT_LIMIT: usize = 12;
@@ -45,29 +48,25 @@ impl<A: PaperSearch, L: LlmProvider, O: PaperSearch> App<A, L, O> {
 
     /// 检索论文，并做跨源去重。
     ///
-    /// 中文查询先经 LLM 转成英文关键词（翻译失败直接报错，不静默用原文搜）。
+    /// 中文查询先过本地学术术语表；术语表覆盖不了且 LLM 已配置时才调用
+    /// LLM。两者都不可用时明确报错，不静默拿中文原文检索。
     /// arXiv 是主源；它失败或没有结果时回退到 OpenAlex。两个源都失败才
     /// 返回 [`Error::Sources`]，绝不假装成功返回空列表。
-    pub async fn search_papers(&self, query: &str, limit: usize) -> Result<Vec<Paper>> {
+    ///
+    /// 返回值包含实际发送给数据源的英文查询，前端可以展示给用户。
+    pub async fn search_papers(&self, query: &str, limit: usize) -> Result<SearchResponse> {
         let query = query.trim();
         if query.is_empty() {
-            return Ok(Vec::new());
+            return Ok(SearchResponse {
+                papers: Vec::new(),
+                query: String::new(),
+            });
         }
 
-        let search_query = if contains_cjk(query) {
-            let translated = self.llm.to_english_keywords(query).await?;
-            tracing::info!(
-                original = query,
-                translated = %translated,
-                "translated Chinese query"
-            );
-            translated
-        } else {
-            query.to_string()
-        };
+        let search_query = self.english_query(query).await?;
 
-        match self.arxiv.search(&search_query, limit).await {
-            Ok(papers) if !papers.is_empty() => Ok(dedupe(papers)),
+        let papers = match self.arxiv.search(&search_query, limit).await {
+            Ok(papers) if !papers.is_empty() => dedupe(papers),
             Ok(_) => {
                 tracing::info!(
                     query = %search_query,
@@ -75,14 +74,14 @@ impl<A: PaperSearch, L: LlmProvider, O: PaperSearch> App<A, L, O> {
                 );
 
                 match self.openalex.search(&search_query, limit).await {
-                    Ok(papers) => Ok(dedupe(papers)),
+                    Ok(papers) => dedupe(papers),
                     Err(error) => {
                         tracing::warn!(
                             error = %error,
                             query = %search_query,
                             "OpenAlex fallback failed after an empty arXiv result"
                         );
-                        Ok(Vec::new())
+                        Vec::new()
                     }
                 }
             }
@@ -93,16 +92,44 @@ impl<A: PaperSearch, L: LlmProvider, O: PaperSearch> App<A, L, O> {
                     "arXiv failed; falling back to OpenAlex"
                 );
 
-                self.openalex
-                    .search(&search_query, limit)
-                    .await
-                    .map(dedupe)
-                    .map_err(|openalex_error| {
-                        Error::Sources(format!(
+                match self.openalex.search(&search_query, limit).await {
+                    Ok(papers) => dedupe(papers),
+                    Err(openalex_error) => {
+                        return Err(Error::Sources(format!(
                             "arXiv: {arxiv_error}; OpenAlex: {openalex_error}"
-                        ))
-                    })
+                        )));
+                    }
+                }
             }
+        };
+
+        Ok(SearchResponse {
+            papers,
+            query: search_query,
+        })
+    }
+
+    /// Translate a Chinese query to English, preferring the local glossary so
+    /// common academic searches work before an API key is configured.
+    async fn english_query(&self, query: &str) -> Result<String> {
+        if !contains_cjk(query) {
+            return Ok(query.to_string());
+        }
+
+        let local = translate_query_locally(query);
+        if !local.is_empty() && !contains_cjk(&local) {
+            tracing::info!(original = query, translated = %local, "translated query locally");
+            return Ok(local);
+        }
+
+        if self.llm.is_configured() {
+            let translated = self.llm.to_english_keywords(query).await?;
+            tracing::info!(original = query, translated = %translated, "translated query with LLM");
+            Ok(translated)
+        } else {
+            Err(Error::Config(
+                "无法自动翻译该中文查询：请在设置中配置 LLM API key，或改用英文关键词".into(),
+            ))
         }
     }
 
@@ -175,11 +202,7 @@ impl<A: PaperSearch, L: LlmProvider, O: PaperSearch> App<A, L, O> {
         let mut translated = Vec::with_capacity(interests.len());
 
         for interest in interests {
-            if contains_cjk(interest) {
-                translated.push(self.llm.to_english_keywords(interest).await?);
-            } else {
-                translated.push(interest.clone());
-            }
+            translated.push(self.english_query(interest).await?);
         }
 
         Ok(translated)
@@ -374,6 +397,7 @@ mod tests {
         translation: String,
         fail_translation: bool,
         translate_calls: AtomicUsize,
+        configured: bool,
     }
 
     impl Default for FakeLlm {
@@ -382,6 +406,7 @@ mod tests {
                 translation: String::new(),
                 fail_translation: false,
                 translate_calls: AtomicUsize::new(0),
+                configured: true,
             }
         }
     }
@@ -401,12 +426,23 @@ mod tests {
             }
         }
 
+        fn unconfigured() -> Self {
+            Self {
+                configured: false,
+                ..Self::default()
+            }
+        }
+
         fn translate_calls(&self) -> usize {
             self.translate_calls.load(Ordering::SeqCst)
         }
     }
 
     impl LlmProvider for FakeLlm {
+        fn is_configured(&self) -> bool {
+            self.configured
+        }
+
         async fn summarize(&self, paper: &Paper) -> Result<Summary> {
             Ok(Summary {
                 short: format!("summary of {}", paper.title),
@@ -463,13 +499,14 @@ mod tests {
             FakeSearch::ok(vec![paper("W1", "Fallback Paper", Source::OpenAlex)]),
         );
 
-        let papers = app
+        let response = app
             .search_papers("diffusion", 10)
             .await
             .expect("fallback should succeed");
 
-        assert_eq!(papers.len(), 1);
-        assert_eq!(papers[0].source, Source::OpenAlex);
+        assert_eq!(response.papers.len(), 1);
+        assert_eq!(response.papers[0].source, Source::OpenAlex);
+        assert_eq!(response.query, "diffusion");
         assert_eq!(app.arxiv.calls(), 1);
         assert_eq!(app.openalex.calls(), 1);
     }
@@ -481,12 +518,12 @@ mod tests {
             FakeSearch::ok(vec![paper("W2", "OpenAlex Only", Source::OpenAlex)]),
         );
 
-        let papers = app
+        let response = app
             .search_papers("rare query", 10)
             .await
             .expect("fallback should succeed");
 
-        assert_eq!(papers.len(), 1);
+        assert_eq!(response.papers.len(), 1);
         assert_eq!(app.openalex.calls(), 1);
     }
 
@@ -497,13 +534,13 @@ mod tests {
             FakeSearch::ok(vec![paper("W3", "Duplicate Title", Source::OpenAlex)]),
         );
 
-        let papers = app
+        let response = app
             .search_papers("query", 10)
             .await
             .expect("primary source should succeed");
 
-        assert_eq!(papers.len(), 1);
-        assert_eq!(papers[0].source, Source::Arxiv);
+        assert_eq!(response.papers.len(), 1);
+        assert_eq!(response.papers[0].source, Source::Arxiv);
         assert_eq!(app.openalex.calls(), 0);
     }
 
@@ -524,22 +561,60 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn translates_chinese_queries_before_searching() {
+    async fn translates_common_chinese_queries_locally() {
         let app = app_with_llm(
             FakeSearch::ok(vec![paper("2401.1", "Paper", Source::Arxiv)]),
-            FakeLlm::translating("diffusion models"),
+            FakeLlm::translating("should not be used"),
             FakeSearch::ok(Vec::new()),
         );
 
-        app.search_papers("扩散模型", 10)
+        let response = app
+            .search_papers("最新的扩散模型论文", 10)
             .await
             .expect("search should succeed");
 
-        assert_eq!(app.llm.translate_calls(), 1);
+        assert_eq!(app.llm.translate_calls(), 0);
+        assert_eq!(response.query, "diffusion models");
         assert_eq!(
             app.arxiv.queries(),
             vec!["diffusion models".to_string()]
         );
+    }
+
+    #[tokio::test]
+    async fn uses_llm_for_unknown_chinese_queries() {
+        let app = app_with_llm(
+            FakeSearch::ok(vec![paper("2401.1", "Paper", Source::Arxiv)]),
+            FakeLlm::translating("niche topic"),
+            FakeSearch::ok(Vec::new()),
+        );
+
+        let response = app
+            .search_papers("冷门未知术语", 10)
+            .await
+            .expect("search should succeed");
+
+        assert_eq!(app.llm.translate_calls(), 1);
+        assert_eq!(response.query, "niche topic");
+        assert_eq!(app.arxiv.queries(), vec!["niche topic".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn reports_config_error_for_unknown_chinese_without_llm() {
+        let app = app_with_llm(
+            FakeSearch::ok(Vec::new()),
+            FakeLlm::unconfigured(),
+            FakeSearch::ok(Vec::new()),
+        );
+
+        let error = app
+            .search_papers("冷门未知术语", 10)
+            .await
+            .expect_err("translation requires an LLM");
+
+        assert!(matches!(error, Error::Config(_)));
+        assert_eq!(app.arxiv.calls(), 0);
+        assert_eq!(app.openalex.calls(), 0);
     }
 
     #[tokio::test]
@@ -570,7 +645,7 @@ mod tests {
         );
 
         let error = app
-            .search_papers("扩散模型", 10)
+            .search_papers("冷门未知术语", 10)
             .await
             .expect_err("translation failed");
 
@@ -770,10 +845,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn browse_feed_translates_chinese_interests() {
+    async fn browse_feed_translates_common_chinese_interests_locally() {
         let app = app_with_llm(
             FakeSearch::with_feed(vec![paper("2401.1", "Paper", Source::Arxiv)]),
-            FakeLlm::translating("diffusion models"),
+            FakeLlm::translating("should not be used"),
             FakeSearch::with_feed(Vec::new()),
         );
 
@@ -783,11 +858,47 @@ mod tests {
             .expect("feed should succeed");
 
         assert_eq!(page.papers.len(), 1);
-        assert_eq!(app.llm.translate_calls(), 1);
+        assert_eq!(app.llm.translate_calls(), 0);
         assert_eq!(
             app.arxiv.feed_requests()[0].interests,
             vec!["diffusion models".to_string()]
         );
+    }
+
+    #[tokio::test]
+    async fn browse_feed_uses_llm_for_unknown_chinese_interests() {
+        let app = app_with_llm(
+            FakeSearch::with_feed(vec![paper("2401.1", "Paper", Source::Arxiv)]),
+            FakeLlm::translating("niche topic"),
+            FakeSearch::with_feed(Vec::new()),
+        );
+
+        app.browse_feed(&["冷门未知术语".into()], 0, 12)
+            .await
+            .expect("feed should succeed");
+
+        assert_eq!(app.llm.translate_calls(), 1);
+        assert_eq!(
+            app.arxiv.feed_requests()[0].interests,
+            vec!["niche topic".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn browse_feed_errors_for_unknown_chinese_without_llm() {
+        let app = app_with_llm(
+            FakeSearch::with_feed(vec![paper("2401.1", "Paper", Source::Arxiv)]),
+            FakeLlm::unconfigured(),
+            FakeSearch::with_feed(Vec::new()),
+        );
+
+        let error = app
+            .browse_feed(&["冷门未知术语".into()], 0, 12)
+            .await
+            .expect_err("translation requires an LLM");
+
+        assert!(matches!(error, Error::Config(_)));
+        assert_eq!(app.arxiv.feed_calls(), 0);
     }
 
     #[test]
@@ -802,6 +913,23 @@ mod tests {
         assert_eq!(normalized.len(), MAX_FEED_INTERESTS);
         assert_eq!(normalized[0], "topic 0");
         assert!(normalized.iter().all(|interest| !interest.starts_with(' ')));
+    }
+
+    #[tokio::test]
+    #[ignore = "hits the live arXiv and OpenAlex APIs"]
+    async fn live_chinese_query_is_translated_locally() {
+        let arxiv = ArxivHttpClient::new().expect("arXiv client should build");
+        let openalex = OpenAlexHttpClient::new().expect("OpenAlex client should build");
+        // No LLM key is configured for this test.
+        let app = App::new(arxiv, FakeLlm::unconfigured(), openalex);
+
+        let response = app
+            .search_papers("扩散模型", 3)
+            .await
+            .expect("local glossary translation should be enough");
+
+        assert_eq!(response.query, "diffusion models");
+        assert!(!response.papers.is_empty());
     }
 
     #[tokio::test]
@@ -831,14 +959,15 @@ mod tests {
         let openalex = OpenAlexHttpClient::new().expect("OpenAlex client should build");
         let app = App::new(arxiv, FakeLlm::default(), openalex);
 
-        let papers = app
+        let response = app
             .search_papers("diffusion models", 3)
             .await
             .expect("at least one source should work");
 
-        assert!(!papers.is_empty());
+        assert!(!response.papers.is_empty());
         assert!(
-            papers
+            response
+                .papers
                 .iter()
                 .all(|p| matches!(p.source, Source::Arxiv | Source::OpenAlex))
         );

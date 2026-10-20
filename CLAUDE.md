@@ -58,7 +58,7 @@ crates/core/  ←  crates/adapters/
 4. **摘要缓存键是 `(paper_id, model, prompt_version)`。** 修改 prompt 时必须 bump `Summary::PROMPT_VERSION`，旧缓存会自动失效。
 5. **跨源去重按归一化标题**（`Paper::dedup_key`），因为 arXiv 与 OpenAlex 对同一篇论文使用不同 id。
 6. **检索源按 arXiv → OpenAlex 回退。** arXiv 报错或没有结果时才调用 OpenAlex；两个源都失败必须返回 `Error::Sources`，不许静默返回空列表。结果中的 `Paper.source` 标明实际来源。
-7. **中文查询必须先经 LLM 转英文关键词。** 翻译失败直接返回 `Error::Llm`，不许拿中文原文继续检索；英文查询不调用 LLM。
+7. **中文查询先本地术语表，再 LLM。** `paperflow_core::translate_query_locally` 覆盖常见学术词，无 key 也能用；仍有中文且 `llm.is_configured()` 时才调用 `to_english_keywords`；两者都不可用返回 `Error::Config`，不许拿中文原文继续检索。`search_papers` 返回 `SearchResponse { papers, query }`，`query` 是实际发送给数据源的英文查询，前端据此展示提示。
 8. **LLM 配置运行时可变。** 设置页维护多个服务商，`active_id` 决定当前使用的端点；保存时写入 `settings.json` 并更新共享 `RwLock`，客户端每次请求读取当前服务商。API key 只保存在本机（Unix 权限 0600），绝不写入日志。
 9. **信息流分页语义：** offset 按 limit 对齐；`has_more` 在去重前按原始页大小计算；offset > 0 的空页视为到底，不再切换数据源；首页 arXiv 为空且 OpenAlex 失败时返回 `Error::Sources`。
 10. **兴趣是前端偏好：** v1 存在 `localStorage`（键 `paperflow.interests.v1`）；跨页按 id + 归一化标题去重；搜索、信息流、LLM 分析使用各自独立的 loading 状态。

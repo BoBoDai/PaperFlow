@@ -23,6 +23,9 @@ use crate::search::describe_error;
 /// LLM capabilities.
 #[allow(async_fn_in_trait)]
 pub trait LlmProvider {
+    /// Whether the provider has enough configuration to make a request.
+    fn is_configured(&self) -> bool;
+
     /// Analyze a paper and produce a structured summary.
     async fn summarize(&self, paper: &Paper) -> Result<Summary>;
 
@@ -156,6 +159,12 @@ impl OpenAiCompatibleClient {
 }
 
 impl LlmProvider for OpenAiCompatibleClient {
+    fn is_configured(&self) -> bool {
+        self.current_config()
+            .map(|config| config.is_configured())
+            .unwrap_or(false)
+    }
+
     async fn summarize(&self, paper: &Paper) -> Result<Summary> {
         let config = self.current_config()?;
         tracing::info!(id = %paper.id, model = %config.model, "requesting paper summary");
@@ -213,6 +222,7 @@ Analyze the paper and reply with JSON only. The JSON object must have exactly th
 Do not use markdown fences, comments, or any text outside the JSON object."#;
 
 const KEYWORDS_SYSTEM_PROMPT: &str = r#"Translate the user's Chinese academic search query into concise English keywords for arXiv and OpenAlex.
+Preserve well-known acronyms such as LLM, RAG, GAN, and Transformer.
 Reply with JSON only, exactly in this shape: {"keywords": "3-8 English keywords separated by spaces"}
 Do not include Chinese characters, quotes, explanations, or markdown fences."#;
 
