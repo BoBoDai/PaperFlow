@@ -14,15 +14,13 @@
 pub mod error;
 pub mod paper;
 pub mod summary;
-pub mod translate;
 
 pub use error::{Error, Result};
 pub use paper::{FeedPage, Paper, SearchResponse, Source};
 pub use summary::Summary;
-pub use translate::translate_query_locally;
 
 /// True for Han characters in the CJK ranges we translate.
-pub(crate) fn is_cjk_char(c: char) -> bool {
+fn is_cjk_char(c: char) -> bool {
     matches!(c as u32, 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF)
 }
 

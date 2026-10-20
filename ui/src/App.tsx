@@ -58,6 +58,10 @@ function saveInterests(interests: string[]): void {
   }
 }
 
+function containsCjk(text: string): boolean {
+  return /[㐀-䶿一-鿿豈-﫿]/.test(text);
+}
+
 function titleKey(title: string): string {
   return title
     .toLowerCase()
@@ -644,6 +648,14 @@ export default function App() {
             effectiveQuery !== query.trim() && (
               <p className="search-hint">
                 已按英文关键词搜索：<strong>{effectiveQuery}</strong>
+              </p>
+            )}
+          {view === 'search' &&
+            effectiveQuery &&
+            effectiveQuery === query.trim() &&
+            containsCjk(effectiveQuery) && (
+              <p className="search-hint">
+                未配置 LLM，已按中文原文检索，结果可能较少。
               </p>
             )}
 
