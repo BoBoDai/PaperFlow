@@ -39,6 +39,12 @@
    见 `paperflow_core::Error::InvalidLlmOutput`。静默降级是最糟的失败模式 ——
    用户看到垃圾，日志里一片安静。
 
+## 文档
+
+- `CLAUDE.md`：常用命令、分层边界、任务路由、必须守住的纪律
+- `docs/architecture.md`：搜索 / 信息流 / 摘要 / 问答 / PDF 的完整调用链
+- `docs/decisions.md`：已定方向与被否决的方案（改架构前先读）
+
 ## 目录
 
 ```
