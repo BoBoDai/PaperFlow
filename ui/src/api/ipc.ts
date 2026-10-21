@@ -7,9 +7,14 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import type {
+  ConnectionTestResult,
   FeedPage,
-  LlmSettings,
+  LlmModelList,
+  LlmProbeInput,
+  LlmSettingsInput,
+  LlmSettingsView,
   Paper,
+  ProviderProfileInfo,
   SearchResponse,
   Summary,
 } from '../types';
@@ -42,10 +47,28 @@ export async function summarizePaper(paper: Paper): Promise<Summary> {
   return invoke<Summary>('summarize_paper', { paper });
 }
 
-export async function getLlmSettings(): Promise<LlmSettings> {
-  return invoke<LlmSettings>('get_llm_settings');
+export async function getLlmSettings(): Promise<LlmSettingsView> {
+  return invoke<LlmSettingsView>('get_llm_settings');
 }
 
-export async function saveLlmSettings(settings: LlmSettings): Promise<LlmSettings> {
-  return invoke<LlmSettings>('save_llm_settings', { settings });
+export async function saveLlmSettings(
+  settings: LlmSettingsInput,
+): Promise<LlmSettingsView> {
+  return invoke<LlmSettingsView>('save_llm_settings', { settings });
+}
+
+export async function getLlmProviderCatalog(): Promise<ProviderProfileInfo[]> {
+  return invoke<ProviderProfileInfo[]>('get_llm_provider_catalog');
+}
+
+export async function fetchLlmModels(
+  input: LlmProbeInput,
+): Promise<LlmModelList> {
+  return invoke<LlmModelList>('fetch_llm_models', { input });
+}
+
+export async function testLlmConnection(
+  input: LlmProbeInput,
+): Promise<ConnectionTestResult> {
+  return invoke<ConnectionTestResult>('test_llm_connection', { input });
 }

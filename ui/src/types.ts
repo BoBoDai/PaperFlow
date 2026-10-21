@@ -43,17 +43,108 @@ export interface FeedPage {
   has_more: boolean;
 }
 
-/** 对应 `src-tauri::settings::LlmProviderConfig` */
-export interface LlmProviderConfig {
-  id: string;
-  name: string;
-  api_key: string;
-  base_url: string;
-  model: string;
+export type ProviderProfileId = 'deepseek' | 'openai' | 'minimax' | 'custom';
+export type MaxTokensField = 'max_tokens' | 'max_completion_tokens';
+export type ThinkingFormat = 'thinking' | 'enable_thinking';
+export type ThinkingMode = 'default' | 'disabled' | 'adaptive';
+
+export interface LlmCompat {
+  json_mode?: boolean | null;
+  max_tokens_field?: MaxTokensField | null;
+  thinking_mode?: ThinkingMode | null;
+  thinking_format?: ThinkingFormat | null;
 }
 
-/** 对应 `src-tauri::settings::LlmSettings` */
-export interface LlmSettings {
-  providers: LlmProviderConfig[];
+export interface EffectiveCapabilities {
+  json_mode: boolean;
+  max_tokens_field: MaxTokensField;
+  thinking_mode: ThinkingMode;
+  thinking_format: ThinkingFormat;
+}
+
+/** 对应 `paperflow_adapters::ProviderProfileInfo` */
+export interface ProviderProfileInfo {
+  id: ProviderProfileId;
+  label: string;
+  default_base_url: string;
+  default_model: string;
+  capabilities: EffectiveCapabilities;
+  protocol: string;
+}
+
+/** 对应 `src-tauri::settings::LlmProviderView`（不含 key） */
+export interface LlmProviderView {
+  id: string;
+  name: string;
+  base_url: string;
+  model: string;
+  provider: ProviderProfileId;
+  compat: LlmCompat;
+  has_api_key: boolean;
+}
+
+/** 对应 `src-tauri::settings::LlmSettingsView` */
+export interface LlmSettingsView {
+  schema_version: number;
+  providers: LlmProviderView[];
   active_id: string;
+}
+
+/** 对应 `src-tauri::settings::LlmProviderInput` */
+export interface LlmProviderInput {
+  id: string;
+  name: string;
+  base_url: string;
+  model: string;
+  provider: ProviderProfileId;
+  compat: LlmCompat;
+  api_key?: string | null;
+  clear_api_key?: boolean;
+}
+
+export interface LlmSettingsInput {
+  providers: LlmProviderInput[];
+  active_id: string;
+}
+
+export interface LlmProbeInput {
+  provider_id: string | null;
+  base_url: string;
+  model: string;
+  provider: ProviderProfileId;
+  compat: LlmCompat;
+  api_key?: string | null;
+}
+
+export type LlmErrorKind =
+  | 'missing_config'
+  | 'bad_request'
+  | 'unauthorized'
+  | 'forbidden'
+  | 'not_found'
+  | 'rate_limited'
+  | 'server'
+  | 'timeout'
+  | 'network'
+  | 'unknown_model'
+  | 'invalid_response';
+
+export interface LlmEndpointError {
+  kind: LlmErrorKind;
+  message: string;
+  status: number | null;
+  request_id: string | null;
+  provider_message: string | null;
+}
+
+export interface LlmModelList {
+  models: string[];
+  request_id: string | null;
+}
+
+export interface ConnectionTestResult {
+  ok: boolean;
+  latency_ms: number;
+  model: string;
+  request_id: string | null;
 }

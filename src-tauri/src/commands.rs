@@ -6,8 +6,12 @@
 //! 错误一律转成 String 跨 IPC，且**不做任何降级** —— 失败就让前端知道，
 //! 不许返回空结果假装成功。
 
-use crate::settings::LlmSettings;
+use crate::settings::{LlmProbeInput, LlmSettingsInput, LlmSettingsView};
 use crate::AppState;
+use paperflow_adapters::{
+    provider_catalog, ConnectionTestResult, LlmEndpointError, LlmErrorKind, LlmModelList,
+    ProviderProfileInfo,
+};
 use paperflow_core::{FeedPage, Paper, SearchResponse, Summary};
 use tauri::State;
 
@@ -57,18 +61,18 @@ pub async fn summarize_paper(state: State<'_, AppState>, paper: Paper) -> IpcRes
     state.app.summarize(&paper).await.map_err(to_ipc)
 }
 
-/// 读取当前 LLM 设置（多服务商列表 + 当前使用的服务商）
+/// 读取当前 LLM 设置（不含 API key）
 #[tauri::command]
-pub fn get_llm_settings(state: State<'_, AppState>) -> IpcResult<LlmSettings> {
-    Ok(state.settings.current())
+pub fn get_llm_settings(state: State<'_, AppState>) -> IpcResult<LlmSettingsView> {
+    Ok(state.settings.current_view())
 }
 
-/// 保存 LLM 设置。API key 只写入本机配置文件，不写日志。
+/// 保存 LLM 设置。API key 只写入本机凭据文件，不写日志、不回传。
 #[tauri::command]
 pub fn save_llm_settings(
     state: State<'_, AppState>,
-    settings: LlmSettings,
-) -> IpcResult<LlmSettings> {
+    settings: LlmSettingsInput,
+) -> IpcResult<LlmSettingsView> {
     let saved = state.settings.save(&settings)?;
     tracing::info!(
         providers = saved.providers.len(),
@@ -76,6 +80,50 @@ pub fn save_llm_settings(
         "LLM settings updated"
     );
     Ok(saved)
+}
+
+/// 内置 provider 预设目录
+#[tauri::command]
+pub fn get_llm_provider_catalog() -> Vec<ProviderProfileInfo> {
+    provider_catalog()
+}
+
+fn missing_config(message: String) -> LlmEndpointError {
+    LlmEndpointError {
+        kind: LlmErrorKind::MissingConfig,
+        message,
+        status: None,
+        request_id: None,
+        provider_message: None,
+    }
+}
+
+/// 拉取 provider 可用模型；key 留空时使用已保存的 key
+#[tauri::command]
+pub async fn fetch_llm_models(
+    state: State<'_, AppState>,
+    input: LlmProbeInput,
+) -> std::result::Result<LlmModelList, LlmEndpointError> {
+    let config = state
+        .settings
+        .resolve_probe(&input)
+        .map_err(missing_config)?;
+
+    state.app.llm.fetch_models(&config).await
+}
+
+/// 测试 provider 连接（endpoint + auth + model）
+#[tauri::command]
+pub async fn test_llm_connection(
+    state: State<'_, AppState>,
+    input: LlmProbeInput,
+) -> std::result::Result<ConnectionTestResult, LlmEndpointError> {
+    let config = state
+        .settings
+        .resolve_probe(&input)
+        .map_err(missing_config)?;
+
+    state.app.llm.test_connection(&config).await
 }
 
 /// 自检：前端可以用它确认 IPC 链路通不通

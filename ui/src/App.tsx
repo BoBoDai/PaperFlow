@@ -5,11 +5,11 @@ import {
   getLlmSettings,
   health,
   isTauri,
-  saveLlmSettings,
   searchPapers,
   summarizePaper,
 } from './api/ipc';
-import type { LlmProviderConfig, LlmSettings, Paper, Summary } from './types';
+import SettingsPanel from './components/SettingsPanel';
+import type { LlmSettingsView, Paper, Summary } from './types';
 
 type Conn = 'checking' | 'ok' | 'error';
 type View = 'feed' | 'search';
@@ -96,11 +96,9 @@ export default function App() {
   const [connMsg, setConnMsg] = useState('');
 
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settings, setSettings] = useState<LlmSettings | null>(null);
-  const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
-  const [settingsBusy, setSettingsBusy] = useState(false);
-  const [settingsError, setSettingsError] = useState<string | null>(null);
-  const [settingsSaved, setSettingsSaved] = useState(false);
+  const [activeProviderName, setActiveProviderName] = useState<string | null>(
+    null,
+  );
 
   const [view, setView] = useState<View>('feed');
   const [interests, setInterests] = useState<string[]>(() => loadInterests());
@@ -148,150 +146,15 @@ export default function App() {
 
     getLlmSettings()
       .then((loaded) => {
-        setSettings(loaded);
-        setSelectedProviderId(loaded.active_id || loaded.providers[0]?.id || null);
+        const active = loaded.providers.find(
+          (provider) => provider.id === loaded.active_id,
+        );
+        setActiveProviderName(active?.name ?? null);
       })
       .catch(() => {
-        // The settings page retries when opened.
+        // The settings panel retries when opened.
       });
   }, []);
-
-  const openSettings = useCallback(async () => {
-    setSettingsOpen(true);
-    setSettingsError(null);
-    setSettingsSaved(false);
-
-    if (!settings) {
-      try {
-        const loaded = await getLlmSettings();
-        setSettings(loaded);
-        setSelectedProviderId(loaded.active_id || loaded.providers[0]?.id || null);
-      } catch (e: unknown) {
-        setSettingsError(String(e));
-      }
-    } else if (!selectedProviderId) {
-      setSelectedProviderId(settings.active_id || settings.providers[0]?.id || null);
-    }
-  }, [settings, selectedProviderId]);
-
-  const selectedProvider =
-    settings?.providers.find((provider) => provider.id === selectedProviderId) ?? null;
-  const activeProvider =
-    settings?.providers.find((provider) => provider.id === settings.active_id) ?? null;
-
-  const updateProvider = useCallback(
-    (field: keyof Omit<LlmProviderConfig, 'id'>, value: string) => {
-      setSettings((current) => {
-        if (!current) return current;
-        return {
-          ...current,
-          providers: current.providers.map((provider) =>
-            provider.id === selectedProviderId ? { ...provider, [field]: value } : provider,
-          ),
-        };
-      });
-      setSettingsSaved(false);
-    },
-    [selectedProviderId],
-  );
-
-  const addProvider = useCallback(() => {
-    const id = `provider-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const provider: LlmProviderConfig = {
-      id,
-      name: '新服务商',
-      api_key: '',
-      base_url: 'https://api.deepseek.com',
-      model: 'deepseek-chat',
-    };
-
-    setSettings((current) =>
-      current
-        ? {
-            ...current,
-            providers: [...current.providers, provider],
-            active_id: current.active_id || id,
-          }
-        : current,
-    );
-    setSelectedProviderId(id);
-    setSettingsSaved(false);
-  }, []);
-
-  const removeProvider = useCallback(
-    (id: string) => {
-      if (!settings || settings.providers.length <= 1) return;
-
-      const providers = settings.providers.filter((provider) => provider.id !== id);
-      const nextProvider = providers[0];
-      if (!nextProvider) return;
-
-      const active_id =
-        settings.active_id === id ? nextProvider.id : settings.active_id;
-
-      setSettings({ ...settings, providers, active_id });
-      setSelectedProviderId(nextProvider.id);
-      setSettingsSaved(false);
-    },
-    [settings],
-  );
-
-  const setActiveProvider = useCallback(() => {
-    if (!selectedProviderId) return;
-
-    setSettings((current) =>
-      current ? { ...current, active_id: selectedProviderId } : current,
-    );
-    setSettingsSaved(false);
-  }, [selectedProviderId]);
-
-  const applyPreset = useCallback(
-    (preset: 'deepseek' | 'openai') => {
-      const values =
-        preset === 'deepseek'
-          ? {
-              name: 'DeepSeek 官方',
-              base_url: 'https://api.deepseek.com',
-              model: 'deepseek-chat',
-            }
-          : {
-              name: 'OpenAI',
-              base_url: 'https://api.openai.com/v1',
-              model: 'gpt-4o-mini',
-            };
-
-      setSettings((current) => {
-        if (!current) return current;
-        return {
-          ...current,
-          providers: current.providers.map((provider) =>
-            provider.id === selectedProviderId ? { ...provider, ...values } : provider,
-          ),
-        };
-      });
-      setSettingsSaved(false);
-    },
-    [selectedProviderId],
-  );
-
-  const submitSettings = useCallback(async () => {
-    if (!settings || settingsBusy) return;
-
-    setSettingsBusy(true);
-    setSettingsError(null);
-    setSettingsSaved(false);
-
-    try {
-      const saved = await saveLlmSettings(settings);
-      setSettings(saved);
-      setSelectedProviderId(saved.active_id || saved.providers[0]?.id || null);
-      setSettingsSaved(true);
-    } catch (e: unknown) {
-      setSettingsError(String(e));
-    } finally {
-      setSettingsBusy(false);
-    }
-  }, [settings, settingsBusy]);
 
   const activeInterests = useMemo(
     () => (selectedInterest === null ? interests : [selectedInterest]),
@@ -489,12 +352,12 @@ export default function App() {
           <span className={`conn conn--${conn}`}>{connMsg || '检查中…'}</span>
           <button
             className="provider-chip"
-            onClick={() => void openSettings()}
+            onClick={() => setSettingsOpen(true)}
             title="当前模型服务"
           >
-            {activeProvider?.name || '未配置模型'}
+            {activeProviderName || '未配置模型'}
           </button>
-          <button className="settings-btn" onClick={() => void openSettings()}>
+          <button className="settings-btn" onClick={() => setSettingsOpen(true)}>
             设置
           </button>
         </div>
@@ -597,7 +460,7 @@ export default function App() {
           </div>
 
           <div className="sidebar-footer">
-            <button className="sidebar-item" onClick={() => void openSettings()}>
+            <button className="sidebar-item" onClick={() => setSettingsOpen(true)}>
               <span className="sidebar-icon">⚙</span>
               设置
             </button>
@@ -764,161 +627,16 @@ export default function App() {
         </div>
       </div>
 
-      {settingsOpen && (
-        <div className="settings-backdrop" onClick={() => setSettingsOpen(false)}>
-          <div className="settings-panel" onClick={(e) => e.stopPropagation()}>
-            <header className="settings-header">
-              <div>
-                <h2>设置</h2>
-                <p className="hint">
-                  配置多个模型服务商，随时切换当前使用的 API。支持任意 OpenAI 兼容端点。
-                </p>
-              </div>
-              <button
-                className="icon-btn"
-                onClick={() => setSettingsOpen(false)}
-                aria-label="关闭"
-              >
-                ✕
-              </button>
-            </header>
-
-            <div className="settings-body">
-              <aside className="provider-list">
-                <div className="provider-list-title">模型服务</div>
-
-                {settings?.providers.map((provider) => (
-                  <button
-                    key={provider.id}
-                    className={`provider-row ${
-                      provider.id === selectedProviderId ? 'provider-row--selected' : ''
-                    }`}
-                    onClick={() => setSelectedProviderId(provider.id)}
-                  >
-                    <span className="provider-avatar">
-                      {provider.name.trim().slice(0, 1) || '?'}
-                    </span>
-                    <span className="provider-meta">
-                      <span className="provider-name">
-                        {provider.name || '未命名服务商'}
-                      </span>
-                      <span className="provider-model">
-                        {provider.model || '未设置模型'}
-                      </span>
-                    </span>
-                    {provider.id === settings?.active_id && (
-                      <span className="provider-badge">当前</span>
-                    )}
-                  </button>
-                ))}
-
-                <button className="provider-add" onClick={addProvider}>
-                  ＋ 新增服务商
-                </button>
-              </aside>
-
-              <section className="provider-editor">
-                {!settings && !settingsError && <p className="empty">加载中…</p>}
-                {settingsError && <div className="error">{settingsError}</div>}
-
-                {settings && !selectedProvider && (
-                  <p className="empty">选择或新增一个服务商。</p>
-                )}
-
-                {settings && selectedProvider && (
-                  <>
-                    <div className="preset-row">
-                      <span className="preset-label">预设</span>
-                      <button onClick={() => applyPreset('deepseek')}>DeepSeek</button>
-                      <button onClick={() => applyPreset('openai')}>OpenAI</button>
-                      <span className="preset-hint">填充 Base URL 和模型，API Key 需自行获取</span>
-                    </div>
-
-                    <label className="field">
-                      <span>名称</span>
-                      <input
-                        value={selectedProvider.name}
-                        onChange={(e) => updateProvider('name', e.target.value)}
-                        placeholder="例如：DeepSeek 官方"
-                        spellCheck={false}
-                      />
-                    </label>
-
-                    <label className="field">
-                      <span>Base URL</span>
-                      <input
-                        value={selectedProvider.base_url}
-                        onChange={(e) => updateProvider('base_url', e.target.value)}
-                        placeholder="https://api.deepseek.com"
-                        spellCheck={false}
-                      />
-                    </label>
-
-                    <label className="field">
-                      <span>API Key</span>
-                      <input
-                        type="password"
-                        value={selectedProvider.api_key}
-                        onChange={(e) => updateProvider('api_key', e.target.value)}
-                        placeholder="sk-..."
-                        spellCheck={false}
-                      />
-                    </label>
-
-                    <label className="field">
-                      <span>模型</span>
-                      <input
-                        value={selectedProvider.model}
-                        onChange={(e) => updateProvider('model', e.target.value)}
-                        placeholder="deepseek-chat"
-                        spellCheck={false}
-                      />
-                    </label>
-
-                    <div className="provider-actions">
-                      <button
-                        className="ghost"
-                        onClick={setActiveProvider}
-                        disabled={selectedProvider.id === settings.active_id}
-                      >
-                        {selectedProvider.id === settings.active_id
-                          ? '当前使用中'
-                          : '设为当前'}
-                      </button>
-                      <button
-                        className="danger"
-                        onClick={() => removeProvider(selectedProvider.id)}
-                        disabled={settings.providers.length <= 1}
-                      >
-                        删除
-                      </button>
-                    </div>
-                  </>
-                )}
-              </section>
-            </div>
-
-            <footer className="settings-footer">
-              <span className="hint">
-                {settingsSaved
-                  ? '已保存'
-                  : 'API key 只保存在本机配置文件中，不会写入日志。'}
-              </span>
-              <div className="settings-footer-actions">
-                <button className="ghost" onClick={() => setSettingsOpen(false)}>
-                  关闭
-                </button>
-                <button
-                  onClick={() => void submitSettings()}
-                  disabled={settingsBusy || !settings || settings.providers.length === 0}
-                >
-                  {settingsBusy ? '保存中' : '保存'}
-                </button>
-              </div>
-            </footer>
-          </div>
-        </div>
-      )}
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onSaved={(savedSettings: LlmSettingsView) => {
+          const active = savedSettings.providers.find(
+            (provider) => provider.id === savedSettings.active_id,
+          );
+          setActiveProviderName(active?.name ?? null);
+        }}
+      />
     </div>
   );
 }

@@ -4,6 +4,7 @@
 //! 业务逻辑一律在 `paperflow-usecases`，这里只做转接。
 
 mod commands;
+mod credentials;
 mod settings;
 
 use paperflow_adapters::{ArxivHttpClient, OpenAiCompatibleClient, OpenAlexHttpClient};
@@ -32,12 +33,11 @@ pub fn run() {
             let arxiv = ArxivHttpClient::new().map_err(|e| e.to_string())?;
             let openalex = OpenAlexHttpClient::new().map_err(|e| e.to_string())?;
 
-            let settings_path = app
+            let config_dir = app
                 .path()
                 .app_config_dir()
-                .map_err(|e| e.to_string())?
-                .join("settings.json");
-            let settings = SettingsManager::load(settings_path);
+                .map_err(|e| e.to_string())?;
+            let settings = SettingsManager::load(config_dir);
             let llm = OpenAiCompatibleClient::new(settings.shared())
                 .map_err(|e| e.to_string())?;
 
@@ -55,6 +55,9 @@ pub fn run() {
             commands::health,
             commands::get_llm_settings,
             commands::save_llm_settings,
+            commands::get_llm_provider_catalog,
+            commands::fetch_llm_models,
+            commands::test_llm_connection,
         ])
         .run(tauri::generate_context!())
         .expect("PaperFlow 启动失败");

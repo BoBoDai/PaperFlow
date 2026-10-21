@@ -100,7 +100,9 @@ pnpm typecheck        # 前端类型检查
 
 - 左侧列表管理服务商，右侧编辑名称 / Base URL / API Key / 模型
 - 预设：DeepSeek（`https://api.deepseek.com` / `deepseek-chat`）、
-  OpenAI（`https://api.openai.com/v1` / `gpt-4o-mini`）
+  OpenAI（`https://api.openai.com/v1` / `gpt-4o-mini`）、
+  MiniMax（国内 `https://api.minimaxi.com/v1` / `MiniMax-M2`；
+  国际版可改为 `https://api.minimax.io/v1`）
 - 「设为当前」决定中文查询翻译和论文分析使用哪个服务商
 - 保存后立即生效，无需重启
 
