@@ -43,9 +43,10 @@ crates/core/  ←  crates/adapters/
 
 - `crates/core`：领域模型 `Paper`、`FeedPage`、`Summary`、`Source`、`QaRequest` / `QaResponse` / `Answer` 与 `Error`/`Result`。领域内共享的纯逻辑放这里（如 `Paper::dedup_key`）。
 - `crates/adapters`：每个外部依赖一个 trait——`PaperSearch`（`search` 关键词检索 / `feed` 兴趣频道，arXiv 与 OpenAlex 共同实现）、`LlmProvider`（`OpenAiCompatibleClient`，默认 DeepSeek；含 `ask_paper` 与 SSE 流式 `ask_paper_stream`）、`PaperStore`；另有 `PdfFetcher`（PDF 下载、校验、缓存）。适配器只做外部格式 ↔ 领域类型的翻译。
-- `crates/usecases`：`App<A, L, O>` 通过泛型注入适配器（不用 `dyn`，规避 `dyn` + `async fn` 的对象安全问题），提供 `search_papers` / `browse_feed` / `summarize` / `ask_paper` 等用例。`search_papers` 先翻译中文查询，再以 arXiv 为主源、OpenAlex 为回退源；`browse_feed` 清洗兴趣、对齐分页 offset 并返回 `FeedPage`；`ask_paper` 负责问题/上下文/历史的字符预算。`dedupe` 是纯函数，可直接单测。
+- `crates/usecases`：`App<A, L, O>` 通过泛型注入适配器（不用 `dyn`，规避 `dyn` + `async fn` 的对象安全问题），提供 `search_papers` / `browse_feed` / `summarize` / `ask_paper` 等用例。`search_papers` 先翻译中文查询，再以 arXiv 为主源、OpenAlex 为回退源；`browse_feed` 清洗兴趣、对齐分页 offset 并返回 `FeedPage`；`ask_paper` 负责问题/上下文/历史的字符预算。`dedupe` 是纯函数，可直接单测。实现按用例拆在 `search.rs`（检索/翻译）、`feed.rs`（信息流）、`qa.rs`（问答预算），测试在 `tests/`。
+- `crates/adapters/src/llm/`：LLM 适配器按职责拆分——`profiles.rs`（服务商预设/兼容能力）、`config.rs`（运行时配置/URL 校验）、`client.rs`（OpenAI 兼容 HTTP/流式）、`streaming.rs`（SSE 与 `<think>` 过滤）、`prompts.rs`（摘要/问答 prompt）、`parsing.rs`（严格输出校验）、`error.rs`（错误映射）。
 - `src-tauri/src/lib.rs`：唯一的适配器装配点（`App::new(ArxivHttpClient, OpenAiCompatibleClient, OpenAlexHttpClient)`），接真实实现时只改这里。
-- `src-tauri/src/settings.rs`：`SettingsManager` 管理多服务商列表（`providers` + `active_id`），每个服务商带 `provider` 家族字段（`deepseek` / `openai` / `minimax`），持久化到应用配置目录的 `settings.json`，并把当前服务商解析成 `LlmConfig` 通过共享 `RwLock` 提供给 LLM 客户端；旧版单服务商配置在加载时自动迁移。
+- `src-tauri/src/settings/`：`SettingsManager` 管理多服务商列表（`providers` + `active_id`），每个服务商带 `provider` 家族字段（`deepseek` / `openai` / `minimax`），持久化到应用配置目录的 `settings.json`，并把当前服务商解析成 `LlmConfig` 通过共享 `RwLock` 提供给 LLM 客户端；旧版单服务商配置在加载时自动迁移。实现按职责拆在 `types.rs`（持久化/IPC 类型）、`manager.rs`（加载/保存）、`normalize.rs`（校验）、`migration.rs`（旧格式迁移）。
 - `src-tauri/src/commands.rs`：IPC command，全部是薄壳（含 `browse_feed` / `ask_paper` / `ask_paper_stream` / `download_pdf` / `get_llm_settings` / `save_llm_settings`）。`ask_paper_stream` 用 `tauri::ipc::Channel<String>` 推送增量，完整响应作为命令返回值。
 - `src-tauri/src/lib.rs`：`AppState` 还持有 `PdfFetcher`；`download_pdf` 返回 `tauri::ipc::Response`（前端收到 `ArrayBuffer`）。
 - `ui/src/components/ReaderView.tsx` / `PdfPane.tsx` / `AiPanel.tsx`：全屏 PDF 阅读器、页面/选区渲染、AI 摘要与问答面板。

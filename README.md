@@ -138,7 +138,7 @@ PDF.js 的 worker、cmaps 和 standard fonts 在构建时复制到 `ui/dist/`。
 
 - [x] `adapters/arxiv.rs` —— 真实 arXiv Atom API 客户端（HTTP + XML 解析）
 - [x] `adapters/openalex.rs` —— OpenAlex 回退源，arXiv 限流或无结果时自动接管
-- [x] `adapters/llm.rs` —— DeepSeek 客户端（OpenAI 兼容）+ 多服务商设置页
+- [x] `adapters/llm/` —— DeepSeek 客户端（OpenAI 兼容）+ 多服务商设置页
 - [x] 兴趣推荐流 —— 侧边栏 + 兴趣频道（按最新发表排序，arXiv/OpenAlex 回退）
 - [x] 内置 PDF 阅读器 + AI 辅助阅读（选区解释 / 当前页 / 全文问答）
 - [ ] `adapters/storage.rs` —— 只有 trait，没有 SQLite 实现
