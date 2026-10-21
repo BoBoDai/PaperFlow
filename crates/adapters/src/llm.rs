@@ -14,7 +14,9 @@
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-use paperflow_core::{contains_cjk, Error, Paper, Result, Summary};
+use paperflow_core::{
+    contains_cjk, Answer, Error, Paper, QaRequest, QaScope, Result, Summary,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::search::describe_error;
@@ -297,6 +299,7 @@ pub trait LlmProvider {
     fn is_configured(&self) -> bool;
     async fn summarize(&self, paper: &Paper) -> Result<Summary>;
     async fn to_english_keywords(&self, chinese_query: &str) -> Result<String>;
+    async fn ask_paper(&self, request: &QaRequest) -> Result<Answer>;
 }
 
 // ---------------------------------------------------------------------------
@@ -768,6 +771,23 @@ impl LlmProvider for OpenAiCompatibleClient {
 
         parse_keywords(&content)
     }
+
+    async fn ask_paper(&self, request: &QaRequest) -> Result<Answer> {
+        let config = self.current_config()?;
+        tracing::info!(
+            id = %request.paper.id,
+            scope = ?request.scope,
+            model = %config.model,
+            "answering paper question"
+        );
+
+        let messages = build_qa_messages(request);
+        let content = self
+            .chat(&config, messages, 4096, Duration::from_secs(180))
+            .await?;
+
+        parse_answer(&content, config.model.trim())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -868,6 +888,106 @@ const KEYWORDS_SYSTEM_PROMPT: &str = r#"Translate the user's Chinese academic se
 Preserve well-known acronyms such as LLM, RAG, GAN, and Transformer.
 Reply with JSON only, exactly in this shape: {"keywords": "3-8 English keywords separated by spaces"}
 Do not include Chinese characters, quotes, explanations, or markdown fences."#;
+
+const QA_SYSTEM_PROMPT: &str = r#"You are a reading assistant embedded in an academic paper reader.
+Answer strictly in Simplified Chinese.
+Use only the paper metadata and context supplied in the final user message. If the context does not contain the answer, say "根据当前上下文无法回答" and suggest changing the scope (当前页 / 全文) or asking a narrower question. Never invent facts, citations, or numbers.
+If the context contains page markers such as [第 3 页], cite the relevant page in your answer.
+If the context contains a marker saying the middle was omitted, explicitly say that the omitted section was not available.
+The scope can be 选中文本, 当前页, or 全文. For 选中文本, the excerpt may be incomplete; explain it in the paper's context.
+Reply with JSON only, exactly in this shape: {"answer": "..."}
+Do not wrap the JSON in markdown fences and do not add text outside the JSON object."#;
+
+fn build_qa_messages(request: &QaRequest) -> Vec<serde_json::Value> {
+    let mut messages = vec![
+        serde_json::json!({ "role": "system", "content": QA_SYSTEM_PROMPT }),
+    ];
+
+    for turn in &request.history {
+        messages.push(serde_json::json!({
+            "role": turn.role.as_str(),
+            "content": turn.content,
+        }));
+    }
+
+    messages.push(serde_json::json!({
+        "role": "user",
+        "content": qa_user_prompt(request),
+    }));
+
+    messages
+}
+
+fn qa_user_prompt(request: &QaRequest) -> String {
+    let paper = &request.paper;
+    let authors = paper
+        .authors
+        .iter()
+        .take(12)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    let authors = if authors.is_empty() {
+        "unknown".to_string()
+    } else {
+        authors
+    };
+    let categories = if paper.categories.is_empty() {
+        "unknown".to_string()
+    } else {
+        paper.categories.join(", ")
+    };
+    let abstract_text: String = paper.abstract_text.chars().take(3000).collect();
+    let abstract_text = if abstract_text.trim().is_empty() {
+        "（无摘要）".to_string()
+    } else {
+        abstract_text
+    };
+
+    let scope = match request.scope {
+        QaScope::Selection => "选中文本",
+        QaScope::CurrentPage => "当前页",
+        QaScope::FullPaper => "全文",
+    };
+    let page = request
+        .page
+        .map(|page| format!("（第 {page} 页）"))
+        .unwrap_or_default();
+
+    format!(
+        "论文信息\n标题: {}\n作者: {}\n分类: {}\n摘要:\n{}\n\n阅读范围: {}{}\n上下文:\n{}\n问题:\n{}",
+        paper.title,
+        authors,
+        categories,
+        abstract_text,
+        scope,
+        page,
+        request.context,
+        request.question,
+    )
+}
+
+#[derive(Debug, Deserialize)]
+struct AnswerPayload {
+    answer: String,
+}
+
+pub(crate) fn parse_answer(content: &str, model: &str) -> Result<Answer> {
+    let payload: AnswerPayload = serde_json::from_str(content).map_err(|e| {
+        Error::InvalidLlmOutput(format!("answer JSON does not match the schema: {e}"))
+    })?;
+
+    let answer = payload.answer.trim().to_string();
+    if answer.is_empty() {
+        return Err(Error::InvalidLlmOutput("answer is empty".into()));
+    }
+
+    Ok(Answer {
+        answer,
+        model: model.to_string(),
+        prompt_version: Answer::PROMPT_VERSION.into(),
+    })
+}
 
 #[derive(Debug, Deserialize)]
 struct ChatResponse {
@@ -1029,6 +1149,7 @@ pub(crate) fn parse_keywords(content: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use paperflow_core::{QaRole, QaTurn};
 
     fn config(provider: ProviderProfileId) -> LlmConfig {
         let defaults = provider.defaults();
@@ -1259,5 +1380,75 @@ mod tests {
             strip_think_block(content),
             r#"{"short":"x","detailed":"y","key_points":["z"]}"#
         );
+    }
+
+    fn qa_request() -> QaRequest {
+        QaRequest {
+            paper: Paper {
+                id: "2401.1".into(),
+                title: "Test Paper".into(),
+                authors: vec!["Alice".into(), "Bob".into()],
+                abstract_text: "An abstract.".into(),
+                categories: vec!["cs.CL".into()],
+                published: chrono::Utc::now(),
+                pdf_url: "https://example.com/secret.pdf?token=abc".into(),
+                source: paperflow_core::Source::Arxiv,
+                venue: None,
+            },
+            question: "核心贡献是什么？".into(),
+            scope: QaScope::CurrentPage,
+            context: "[第 3 页]\nThe method ...".into(),
+            page: Some(3),
+            history: vec![
+                QaTurn {
+                    role: QaRole::User,
+                    content: "上一轮问题".into(),
+                },
+                QaTurn {
+                    role: QaRole::Assistant,
+                    content: "上一轮回答".into(),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn builds_qa_messages_with_metadata_context_and_history() {
+        let messages = build_qa_messages(&qa_request());
+        let serialized = serde_json::to_string(&messages).expect("messages should serialize");
+
+        assert!(serialized.contains("Test Paper"));
+        assert!(serialized.contains("核心贡献"));
+        assert!(serialized.contains("[第 3 页]"));
+        assert!(serialized.contains("上一轮问题"));
+        assert!(serialized.contains("上一轮回答"));
+        assert_eq!(messages.len(), 4);
+    }
+
+    #[test]
+    fn qa_prompt_omits_pdf_url() {
+        let serialized =
+            serde_json::to_string(&build_qa_messages(&qa_request())).expect("messages should serialize");
+
+        assert!(!serialized.contains("secret.pdf"));
+        assert!(!serialized.contains("token=abc"));
+    }
+
+    #[test]
+    fn parses_valid_answer() {
+        let answer =
+            parse_answer(r#"{"answer":"这是解释"}"#, "model").expect("answer should parse");
+
+        assert_eq!(answer.answer, "这是解释");
+        assert_eq!(answer.model, "model");
+        assert_eq!(answer.prompt_version, Answer::PROMPT_VERSION);
+    }
+
+    #[test]
+    fn rejects_empty_answer() {
+        assert!(matches!(
+            parse_answer(r#"{"answer":"   "}"#, "model"),
+            Err(Error::InvalidLlmOutput(_))
+        ));
     }
 }

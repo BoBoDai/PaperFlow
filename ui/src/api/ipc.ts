@@ -15,6 +15,8 @@ import type {
   LlmSettingsView,
   Paper,
   ProviderProfileInfo,
+  QaRequest,
+  QaResponse,
   SearchResponse,
   Summary,
 } from '../types';
@@ -71,4 +73,21 @@ export async function testLlmConnection(
   input: LlmProbeInput,
 ): Promise<ConnectionTestResult> {
   return invoke<ConnectionTestResult>('test_llm_connection', { input });
+}
+
+export async function askPaper(request: QaRequest): Promise<QaResponse> {
+  return invoke<QaResponse>('ask_paper', { request });
+}
+
+const pdfRequests = new Map<string, Promise<ArrayBuffer>>();
+
+export async function downloadPdf(url: string): Promise<ArrayBuffer> {
+  const existing = pdfRequests.get(url);
+  if (existing) return existing;
+
+  const request = invoke<ArrayBuffer>('download_pdf', { url }).finally(() => {
+    pdfRequests.delete(url);
+  });
+  pdfRequests.set(url, request);
+  return request;
 }

@@ -12,10 +12,12 @@
 pub mod arxiv;
 pub mod llm;
 pub mod openalex;
+pub mod pdf;
 pub mod search;
 pub mod storage;
 
 pub use arxiv::ArxivHttpClient;
+pub use pdf::PdfFetcher;
 pub use llm::{
     base_url_host, normalize_base_url, provider_catalog, ConnectionTestResult,
     EffectiveCapabilities, LlmCompat, LlmConfig, LlmEndpointError, LlmErrorKind, LlmModelList,

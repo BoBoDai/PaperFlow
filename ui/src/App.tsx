@@ -8,6 +8,7 @@ import {
   searchPapers,
   summarizePaper,
 } from './api/ipc';
+import ReaderView from './components/ReaderView';
 import SettingsPanel from './components/SettingsPanel';
 import type { LlmSettingsView, Paper, Summary } from './types';
 
@@ -113,6 +114,8 @@ export default function App() {
 
   const [searchBusy, setSearchBusy] = useState(false);
   const [summaryBusy, setSummaryBusy] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [readerOpen, setReaderOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [feedPapers, setFeedPapers] = useState<Paper[]>([]);
@@ -222,6 +225,8 @@ export default function App() {
     setError(null);
     setSelected(null);
     setSummary(null);
+    setSummaryError(null);
+    setReaderOpen(false);
 
     void fetchFeedPage(activeInterests, 0, true);
   }, [view, feedKey, activeInterests, fetchFeedPage]);
@@ -287,6 +292,8 @@ export default function App() {
     setError(null);
     setSelected(null);
     setSummary(null);
+    setSummaryError(null);
+    setReaderOpen(false);
     setEffectiveQuery(null);
     try {
       const response = await searchPapers(q, 10);
@@ -305,12 +312,13 @@ export default function App() {
     setSelected(paper);
     setSummary(null);
     setSummaryBusy(true);
-    setError(null);
+    setSummaryError(null);
+    setReaderOpen(false);
     try {
       const result = await summarizePaper(paper);
       if (requestId === summaryRequestId.current) setSummary(result);
     } catch (e: unknown) {
-      if (requestId === summaryRequestId.current) setError(String(e));
+      if (requestId === summaryRequestId.current) setSummaryError(String(e));
     } finally {
       if (requestId === summaryRequestId.current) setSummaryBusy(false);
     }
@@ -601,11 +609,33 @@ export default function App() {
                     ))}
                   </div>
 
+                  <button
+                    className="read-btn"
+                    onClick={() => setReaderOpen(true)}
+                    disabled={!selected.pdf_url}
+                  >
+                    开始阅读
+                  </button>
+                  {!selected.pdf_url && (
+                    <p className="meta">该论文没有可用的 PDF 链接。</p>
+                  )}
+
                   <h4>摘要</h4>
                   <p className="body">{selected.abstract_text}</p>
 
                   <h4>LLM 分析</h4>
                   {summaryBusy && <p className="empty">分析中…</p>}
+                  {summaryError && (
+                    <div className="summary-error">
+                      <span>{summaryError}</span>
+                      <button
+                        className="ghost-btn"
+                        onClick={() => void open(selected)}
+                      >
+                        重试
+                      </button>
+                    </div>
+                  )}
                   {summary && (
                     <>
                       <p className="body">{summary.short}</p>
@@ -637,6 +667,18 @@ export default function App() {
           setActiveProviderName(active?.name ?? null);
         }}
       />
+
+      {readerOpen && selected && (
+        <ReaderView
+          key={selected.id}
+          paper={selected}
+          summary={summary}
+          summaryBusy={summaryBusy}
+          summaryError={summaryError}
+          onRetrySummary={() => void open(selected)}
+          onClose={() => setReaderOpen(false)}
+        />
+      )}
     </div>
   );
 }

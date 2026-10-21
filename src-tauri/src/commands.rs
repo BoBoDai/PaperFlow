@@ -12,7 +12,7 @@ use paperflow_adapters::{
     provider_catalog, ConnectionTestResult, LlmEndpointError, LlmErrorKind, LlmModelList,
     ProviderProfileInfo,
 };
-use paperflow_core::{FeedPage, Paper, SearchResponse, Summary};
+use paperflow_core::{FeedPage, Paper, QaRequest, QaResponse, SearchResponse, Summary};
 use tauri::State;
 
 type IpcResult<T> = std::result::Result<T, String>;
@@ -59,6 +59,25 @@ pub async fn browse_feed(
 #[tauri::command]
 pub async fn summarize_paper(state: State<'_, AppState>, paper: Paper) -> IpcResult<Summary> {
     state.app.summarize(&paper).await.map_err(to_ipc)
+}
+
+/// 基于 PDF 上下文回答论文问题
+#[tauri::command]
+pub async fn ask_paper(
+    state: State<'_, AppState>,
+    request: QaRequest,
+) -> IpcResult<QaResponse> {
+    state.app.ask_paper(request).await.map_err(to_ipc)
+}
+
+/// 下载 PDF，返回原始字节（前端收到 ArrayBuffer）
+#[tauri::command]
+pub async fn download_pdf(
+    state: State<'_, AppState>,
+    url: String,
+) -> IpcResult<tauri::ipc::Response> {
+    let bytes = state.pdf.fetch(&url).await.map_err(to_ipc)?;
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 /// 读取当前 LLM 设置（不含 API key）

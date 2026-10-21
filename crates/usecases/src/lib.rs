@@ -17,7 +17,8 @@
 
 use paperflow_adapters::{LlmProvider, PaperSearch};
 use paperflow_core::{
-    contains_cjk, Error, FeedPage, Paper, Result, SearchResponse, Summary,
+    contains_cjk, Error, FeedPage, Paper, QaRequest, QaResponse, QaRole, QaScope, QaTurn,
+    Result, SearchResponse, Summary,
 };
 
 /// Default page size for the interest feed.
@@ -26,6 +27,13 @@ pub const FEED_DEFAULT_LIMIT: usize = 12;
 pub const FEED_MAX_LIMIT: usize = 50;
 /// Keep the generated source query short enough for a GET URL.
 pub const MAX_FEED_INTERESTS: usize = 8;
+
+/// Character budget for the full-paper Q&A context.
+pub const QA_CONTEXT_BUDGET: usize = 40_000;
+pub const QA_SELECTION_BUDGET: usize = 8_000;
+pub const QA_QUESTION_BUDGET: usize = 2_000;
+pub const QA_HISTORY_TURNS: usize = 6;
+pub const QA_HISTORY_BUDGET: usize = 12_000;
 
 /// 应用上下文：所有适配器在这里注入。
 ///
@@ -203,10 +211,116 @@ impl<A: PaperSearch, L: LlmProvider, O: PaperSearch> App<A, L, O> {
         Ok(translated)
     }
 
+    /// 基于 PDF 上下文回答论文问题。
+    pub async fn ask_paper(&self, request: QaRequest) -> Result<QaResponse> {
+        let (request, context_truncated, context_chars) = prepare_qa(request)?;
+        let answer = self.llm.ask_paper(&request).await?;
+
+        Ok(QaResponse {
+            answer: answer.answer,
+            model: answer.model,
+            prompt_version: answer.prompt_version,
+            scope: request.scope,
+            page: request.page,
+            context_truncated,
+            context_chars,
+        })
+    }
+
     /// 分析论文
     pub async fn summarize(&self, paper: &Paper) -> Result<Summary> {
         self.llm.summarize(paper).await
     }
+}
+
+fn char_count(text: &str) -> usize {
+    text.chars().count()
+}
+
+fn prepare_qa(mut request: QaRequest) -> Result<(QaRequest, bool, usize)> {
+    let question = request.question.trim().to_string();
+    if question.is_empty() {
+        return Err(Error::InvalidInput("问题不能为空".into()));
+    }
+    if char_count(&question) > QA_QUESTION_BUDGET {
+        return Err(Error::InvalidInput(format!(
+            "问题过长（最多 {QA_QUESTION_BUDGET} 字）"
+        )));
+    }
+    request.question = question;
+
+    let context = request.context.trim().to_string();
+    if context.is_empty() {
+        return Err(Error::InvalidInput(
+            "没有可用的 PDF 文本。该 PDF 可能是扫描版，或文本尚未提取完成。".into(),
+        ));
+    }
+
+    let budget = match request.scope {
+        QaScope::Selection => QA_SELECTION_BUDGET,
+        QaScope::CurrentPage | QaScope::FullPaper => QA_CONTEXT_BUDGET,
+    };
+
+    let (context, truncated) = if request.scope == QaScope::FullPaper && char_count(&context) > budget
+    {
+        let head: String = context.chars().take(budget * 3 / 4).collect();
+        let tail: String = context
+            .chars()
+            .rev()
+            .take(budget / 4)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
+        (
+            format!("{head}\n\n[…上下文过长，中间内容已省略…]\n\n{tail}"),
+            true,
+        )
+    } else if char_count(&context) > budget {
+        (context.chars().take(budget).collect(), true)
+    } else {
+        (context, false)
+    };
+
+    let context_chars = char_count(&context);
+    request.context = context;
+    request.history = sanitize_history(request.history);
+
+    Ok((request, truncated, context_chars))
+}
+
+fn sanitize_history(history: Vec<QaTurn>) -> Vec<QaTurn> {
+    let mut turns: Vec<QaTurn> = history
+        .into_iter()
+        .filter_map(|turn| {
+            let content = turn.content.trim().to_string();
+            if content.is_empty() {
+                return None;
+            }
+
+            let budget = match turn.role {
+                QaRole::User => 2_000,
+                QaRole::Assistant => 4_000,
+            };
+
+            Some(QaTurn {
+                role: turn.role,
+                content: content.chars().take(budget).collect(),
+            })
+        })
+        .collect();
+
+    if turns.len() > QA_HISTORY_TURNS {
+        turns = turns.split_off(turns.len() - QA_HISTORY_TURNS);
+    }
+
+    let mut total: usize = turns.iter().map(|turn| char_count(&turn.content)).sum();
+    while total > QA_HISTORY_BUDGET && turns.len() > 1 {
+        let removed = turns.remove(0);
+        total -= char_count(&removed.content);
+    }
+
+    turns
 }
 
 fn normalize_interests(interests: &[String]) -> Vec<String> {
@@ -251,7 +365,7 @@ mod tests {
 
     use chrono::Utc;
     use paperflow_adapters::{ArxivHttpClient, OpenAlexHttpClient};
-    use paperflow_core::Source;
+    use paperflow_core::{Answer, Source};
 
     fn paper(id: &str, title: &str, source: Source) -> Paper {
         Paper {
@@ -393,6 +507,10 @@ mod tests {
         fail_translation: bool,
         translate_calls: AtomicUsize,
         configured: bool,
+        answer: String,
+        fail_answer: bool,
+        answer_calls: AtomicUsize,
+        last_qa: Mutex<Option<QaRequest>>,
     }
 
     impl Default for FakeLlm {
@@ -402,6 +520,10 @@ mod tests {
                 fail_translation: false,
                 translate_calls: AtomicUsize::new(0),
                 configured: true,
+                answer: "答案".into(),
+                fail_answer: false,
+                answer_calls: AtomicUsize::new(0),
+                last_qa: Mutex::new(None),
             }
         }
     }
@@ -428,8 +550,33 @@ mod tests {
             }
         }
 
+        fn answering(answer: &str) -> Self {
+            Self {
+                answer: answer.into(),
+                ..Self::default()
+            }
+        }
+
+        fn failing_answer() -> Self {
+            Self {
+                fail_answer: true,
+                ..Self::default()
+            }
+        }
+
         fn translate_calls(&self) -> usize {
             self.translate_calls.load(Ordering::SeqCst)
+        }
+
+        fn answer_calls(&self) -> usize {
+            self.answer_calls.load(Ordering::SeqCst)
+        }
+
+        fn last_qa(&self) -> Option<QaRequest> {
+            self.last_qa
+                .lock()
+                .ok()
+                .and_then(|request| request.as_ref().cloned())
         }
     }
 
@@ -456,6 +603,23 @@ mod tests {
             } else {
                 Ok(self.translation.clone())
             }
+        }
+
+        async fn ask_paper(&self, request: &QaRequest) -> Result<Answer> {
+            self.answer_calls.fetch_add(1, Ordering::SeqCst);
+            if let Ok(mut last) = self.last_qa.lock() {
+                *last = Some(request.clone());
+            }
+
+            if self.fail_answer {
+                return Err(Error::Llm("qa failed".into()));
+            }
+
+            Ok(Answer {
+                answer: self.answer.clone(),
+                model: "fake".into(),
+                prompt_version: Answer::PROMPT_VERSION.into(),
+            })
         }
     }
 
@@ -876,6 +1040,153 @@ mod tests {
         assert_eq!(normalized.len(), MAX_FEED_INTERESTS);
         assert_eq!(normalized[0], "topic 0");
         assert!(normalized.iter().all(|interest| !interest.starts_with(' ')));
+    }
+
+    fn qa_request(scope: QaScope, context: &str) -> QaRequest {
+        QaRequest {
+            paper: paper("p1", "Paper", Source::Arxiv),
+            question: "这篇论文的核心贡献是什么？".into(),
+            scope,
+            context: context.into(),
+            page: Some(2),
+            history: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn ask_paper_rejects_empty_question() {
+        let app = app(
+            FakeSearch::ok(Vec::new()),
+            FakeSearch::ok(Vec::new()),
+        );
+        let mut request = qa_request(QaScope::CurrentPage, "page text");
+        request.question = "   ".into();
+
+        let error = app
+            .ask_paper(request)
+            .await
+            .expect_err("empty question should fail");
+
+        assert!(matches!(error, Error::InvalidInput(_)));
+    }
+
+    #[tokio::test]
+    async fn ask_paper_rejects_empty_context() {
+        let app = app(
+            FakeSearch::ok(Vec::new()),
+            FakeSearch::ok(Vec::new()),
+        );
+
+        let error = app
+            .ask_paper(qa_request(QaScope::CurrentPage, "   "))
+            .await
+            .expect_err("empty context should fail");
+
+        assert!(matches!(error, Error::InvalidInput(_)));
+    }
+
+    #[tokio::test]
+    async fn ask_paper_truncates_full_context_head_and_tail() {
+        let app = app_with_llm(
+            FakeSearch::ok(Vec::new()),
+            FakeLlm::answering("答案"),
+            FakeSearch::ok(Vec::new()),
+        );
+
+        let context = format!("HEAD{}TAIL", "x".repeat(50_000));
+        let response = app
+            .ask_paper(qa_request(QaScope::FullPaper, &context))
+            .await
+            .expect("qa should succeed");
+
+        assert!(response.context_truncated);
+        assert!(response.context_chars <= QA_CONTEXT_BUDGET + 100);
+
+        let sent = app.llm.last_qa().expect("request should be recorded");
+        assert!(sent.context.contains("HEAD"));
+        assert!(sent.context.contains("TAIL"));
+        assert!(sent.context.contains("中间内容已省略"));
+    }
+
+    #[tokio::test]
+    async fn ask_paper_keeps_only_recent_history() {
+        let app = app_with_llm(
+            FakeSearch::ok(Vec::new()),
+            FakeLlm::default(),
+            FakeSearch::ok(Vec::new()),
+        );
+
+        let mut request = qa_request(QaScope::CurrentPage, "page text");
+        request.history = (0..10)
+            .map(|index| QaTurn {
+                role: if index % 2 == 0 {
+                    QaRole::User
+                } else {
+                    QaRole::Assistant
+                },
+                content: format!("turn {index}"),
+            })
+            .collect();
+
+        app.ask_paper(request).await.expect("qa should succeed");
+
+        let sent = app.llm.last_qa().expect("request should be recorded");
+        assert_eq!(sent.history.len(), QA_HISTORY_TURNS);
+        assert_eq!(sent.history[0].content, "turn 4");
+        assert_eq!(sent.history[5].content, "turn 9");
+    }
+
+    #[tokio::test]
+    async fn ask_paper_caps_question_by_characters() {
+        let app = app(
+            FakeSearch::ok(Vec::new()),
+            FakeSearch::ok(Vec::new()),
+        );
+
+        let mut request = qa_request(QaScope::CurrentPage, "page text");
+        request.question = "问".repeat(QA_QUESTION_BUDGET + 1);
+
+        let error = app
+            .ask_paper(request)
+            .await
+            .expect_err("question is too long");
+
+        assert!(matches!(error, Error::InvalidInput(_)));
+    }
+
+    #[tokio::test]
+    async fn ask_paper_returns_scope_and_page() {
+        let app = app_with_llm(
+            FakeSearch::ok(Vec::new()),
+            FakeLlm::answering("答案"),
+            FakeSearch::ok(Vec::new()),
+        );
+
+        let response = app
+            .ask_paper(qa_request(QaScope::CurrentPage, "page text"))
+            .await
+            .expect("qa should succeed");
+
+        assert_eq!(response.answer, "答案");
+        assert_eq!(response.scope, QaScope::CurrentPage);
+        assert_eq!(response.page, Some(2));
+        assert_eq!(app.llm.answer_calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn ask_paper_propagates_llm_errors() {
+        let app = app_with_llm(
+            FakeSearch::ok(Vec::new()),
+            FakeLlm::failing_answer(),
+            FakeSearch::ok(Vec::new()),
+        );
+
+        let error = app
+            .ask_paper(qa_request(QaScope::CurrentPage, "page text"))
+            .await
+            .expect_err("llm should fail");
+
+        assert!(matches!(error, Error::Llm(_)));
     }
 
     #[tokio::test]

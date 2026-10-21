@@ -148,3 +148,33 @@ export interface ConnectionTestResult {
   model: string;
   request_id: string | null;
 }
+
+export type QaScope = 'selection' | 'current_page' | 'full_paper';
+export type QaRole = 'user' | 'assistant';
+
+/** 对应 `paperflow_core::QaTurn` */
+export interface QaTurn {
+  role: QaRole;
+  content: string;
+}
+
+/** 对应 `paperflow_core::QaRequest` */
+export interface QaRequest {
+  paper: Paper;
+  question: string;
+  scope: QaScope;
+  context: string;
+  page: number | null;
+  history: QaTurn[];
+}
+
+/** 对应 `paperflow_core::QaResponse` */
+export interface QaResponse {
+  answer: string;
+  model: string;
+  prompt_version: string;
+  scope: QaScope;
+  page: number | null;
+  context_truncated: boolean;
+  context_chars: number;
+}

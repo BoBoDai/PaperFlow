@@ -1,8 +1,25 @@
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
+import { viteStaticCopy } from 'vite-plugin-static-copy';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    viteStaticCopy({
+      targets: [
+        {
+          src: 'node_modules/pdfjs-dist/cmaps/*',
+          dest: 'cmaps',
+          rename: { stripBase: true },
+        },
+        {
+          src: 'node_modules/pdfjs-dist/standard_fonts/*',
+          dest: 'standard_fonts',
+          rename: { stripBase: true },
+        },
+      ],
+    }),
+  ],
 
   // Tauri 的 CLI 会接管终端输出，别让 Vite 清屏
   clearScreen: false,

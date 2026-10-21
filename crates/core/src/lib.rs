@@ -13,10 +13,12 @@
 
 pub mod error;
 pub mod paper;
+pub mod qa;
 pub mod summary;
 
 pub use error::{Error, Result};
 pub use paper::{FeedPage, Paper, SearchResponse, Source};
+pub use qa::{Answer, QaRequest, QaResponse, QaRole, QaScope, QaTurn};
 pub use summary::Summary;
 
 /// True for Han characters in the CJK ranges we translate.

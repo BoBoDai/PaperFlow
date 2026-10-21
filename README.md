@@ -6,6 +6,7 @@
 - 兴趣频道推荐流：按兴趣浏览最新论文，类似论文版信息流
 - 中文查询由 LLM 自动转英文关键词
 - LLM 分析论文的核心贡献与关键要点
+- 内置 PDF 阅读器 + AI 阅读助手（选区解释 / 当前页 / 全文问答）
 - 后台定时监控新论文
 
 ## 架构
@@ -94,6 +95,19 @@ pnpm typecheck        # 前端类型检查
 - 兴趣在左侧增删，最多 8 个；建议使用英文主题（数据源以英文论文为主）
 - 兴趣保存在浏览器 `localStorage`（键 `paperflow.interests.v1`），暂不写入后端配置
 
+## 阅读论文
+
+点击论文卡片先显示 AI 总结；详情页点「开始阅读」打开内置 PDF 阅读器：
+
+- PDF 由 Rust 下载并缓存（HTTPS、公网地址、32MB 上限、`%PDF-` 校验），避开 WebView CORS
+- 支持翻页、页码跳转、缩放
+- 选中 PDF 文本 → 「解释选中内容」
+- 问答支持「当前页」和「全文」两种上下文；全文超过约 4 万字符时取开头 + 结尾，并提示已截断
+- 多轮追问保留最近 6 轮，回答为简体中文
+- 扫描版 PDF、出版商登录页/订阅页等无法直接阅读时会给出明确错误
+
+PDF.js 的 worker、cmaps 和 standard fonts 在构建时复制到 `ui/dist/`。
+
 ## LLM 配置
 
 右上角「设置」是一个多服务商管理面板，可配置多个任意 OpenAI 兼容端点：
@@ -125,6 +139,7 @@ pnpm typecheck        # 前端类型检查
 - [x] `adapters/openalex.rs` —— OpenAlex 回退源，arXiv 限流或无结果时自动接管
 - [x] `adapters/llm.rs` —— DeepSeek 客户端（OpenAI 兼容）+ 多服务商设置页
 - [x] 兴趣推荐流 —— 侧边栏 + 兴趣频道（按最新发表排序，arXiv/OpenAlex 回退）
+- [x] 内置 PDF 阅读器 + AI 辅助阅读（选区解释 / 当前页 / 全文问答）
 - [ ] `adapters/storage.rs` —— 只有 trait，没有 SQLite 实现
 - [ ] 后台调度器（定时抓取 + 通知）
 - [ ] `ui/src/types.ts` 是手写的 Rust 类型镜像，应该用 ts-rs 生成

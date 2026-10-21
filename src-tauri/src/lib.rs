@@ -7,7 +7,9 @@ mod commands;
 mod credentials;
 mod settings;
 
-use paperflow_adapters::{ArxivHttpClient, OpenAiCompatibleClient, OpenAlexHttpClient};
+use paperflow_adapters::{
+    ArxivHttpClient, OpenAiCompatibleClient, OpenAlexHttpClient, PdfFetcher,
+};
 use paperflow_usecases::App;
 use settings::SettingsManager;
 use tauri::Manager;
@@ -16,6 +18,7 @@ use tauri::Manager;
 pub struct AppState {
     pub app: App<ArxivHttpClient, OpenAiCompatibleClient, OpenAlexHttpClient>,
     pub settings: SettingsManager,
+    pub pdf: PdfFetcher,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -38,12 +41,20 @@ pub fn run() {
                 .app_config_dir()
                 .map_err(|e| e.to_string())?;
             let settings = SettingsManager::load(config_dir);
+
+            let pdf_cache_dir = app
+                .path()
+                .app_cache_dir()
+                .map_err(|e| e.to_string())?
+                .join("pdfs");
+            let pdf = PdfFetcher::new(pdf_cache_dir).map_err(|e| e.to_string())?;
             let llm = OpenAiCompatibleClient::new(settings.shared())
                 .map_err(|e| e.to_string())?;
 
             app.manage(AppState {
                 app: App::new(arxiv, llm, openalex),
                 settings,
+                pdf,
             });
 
             Ok(())
@@ -58,6 +69,8 @@ pub fn run() {
             commands::get_llm_provider_catalog,
             commands::fetch_llm_models,
             commands::test_llm_connection,
+            commands::ask_paper,
+            commands::download_pdf,
         ])
         .run(tauri::generate_context!())
         .expect("PaperFlow 启动失败");
