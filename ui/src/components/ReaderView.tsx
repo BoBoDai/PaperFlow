@@ -12,6 +12,7 @@ import PdfPane from './PdfPane';
 interface ReaderViewProps {
   paper: Paper;
   summary: Summary | null;
+  summaryStream: string;
   summaryBusy: boolean;
   summaryError: string | null;
   onRetrySummary: () => void;
@@ -23,6 +24,7 @@ type LoadStatus = 'loading' | 'ready' | 'error';
 export default function ReaderView({
   paper,
   summary,
+  summaryStream,
   summaryBusy,
   summaryError,
   onRetrySummary,
@@ -206,6 +208,7 @@ export default function ReaderView({
         <AiPanel
           paper={paper}
           summary={summary}
+          summaryStream={summaryStream}
           summaryBusy={summaryBusy}
           summaryError={summaryError}
           onRetrySummary={onRetrySummary}

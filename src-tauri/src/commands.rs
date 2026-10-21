@@ -61,6 +61,24 @@ pub async fn summarize_paper(state: State<'_, AppState>, paper: Paper) -> IpcRes
     state.app.summarize(&paper).await.map_err(to_ipc)
 }
 
+/// 流式论文分析：增量通过 Channel 推送，结构化摘要作为命令返回值。
+#[tauri::command]
+pub async fn summarize_paper_stream(
+    state: State<'_, AppState>,
+    paper: Paper,
+    on_event: tauri::ipc::Channel<String>,
+) -> IpcResult<Summary> {
+    let channel = on_event.clone();
+
+    state
+        .app
+        .summarize_stream(&paper, move |delta| {
+            let _ = channel.send(delta);
+        })
+        .await
+        .map_err(to_ipc)
+}
+
 /// 基于 PDF 上下文回答论文问题
 #[tauri::command]
 pub async fn ask_paper(
@@ -68,6 +86,24 @@ pub async fn ask_paper(
     request: QaRequest,
 ) -> IpcResult<QaResponse> {
     state.app.ask_paper(request).await.map_err(to_ipc)
+}
+
+/// 流式问答：增量通过 Channel 推送，完整响应作为命令返回值。
+#[tauri::command]
+pub async fn ask_paper_stream(
+    state: State<'_, AppState>,
+    request: QaRequest,
+    on_event: tauri::ipc::Channel<String>,
+) -> IpcResult<QaResponse> {
+    let channel = on_event.clone();
+
+    state
+        .app
+        .ask_paper_stream(request, move |delta| {
+            let _ = channel.send(delta);
+        })
+        .await
+        .map_err(to_ipc)
 }
 
 /// 下载 PDF，返回原始字节（前端收到 ArrayBuffer）

@@ -6,7 +6,7 @@ import {
   health,
   isTauri,
   searchPapers,
-  summarizePaper,
+  summarizePaperStream,
 } from './api/ipc';
 import ReaderView from './components/ReaderView';
 import SettingsPanel from './components/SettingsPanel';
@@ -114,6 +114,7 @@ export default function App() {
 
   const [searchBusy, setSearchBusy] = useState(false);
   const [summaryBusy, setSummaryBusy] = useState(false);
+  const [summaryStream, setSummaryStream] = useState('');
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [readerOpen, setReaderOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -225,6 +226,7 @@ export default function App() {
     setError(null);
     setSelected(null);
     setSummary(null);
+    setSummaryStream('');
     setSummaryError(null);
     setReaderOpen(false);
 
@@ -292,6 +294,7 @@ export default function App() {
     setError(null);
     setSelected(null);
     setSummary(null);
+    setSummaryStream('');
     setSummaryError(null);
     setReaderOpen(false);
     setEffectiveQuery(null);
@@ -311,11 +314,17 @@ export default function App() {
     const requestId = ++summaryRequestId.current;
     setSelected(paper);
     setSummary(null);
+    setSummaryStream('');
     setSummaryBusy(true);
     setSummaryError(null);
     setReaderOpen(false);
+
     try {
-      const result = await summarizePaper(paper);
+      const result = await summarizePaperStream(paper, (delta) => {
+        if (requestId === summaryRequestId.current) {
+          setSummaryStream((current) => current + delta);
+        }
+      });
       if (requestId === summaryRequestId.current) setSummary(result);
     } catch (e: unknown) {
       if (requestId === summaryRequestId.current) setSummaryError(String(e));
@@ -624,7 +633,15 @@ export default function App() {
                   <p className="body">{selected.abstract_text}</p>
 
                   <h4>LLM 分析</h4>
-                  {summaryBusy && <p className="empty">分析中…</p>}
+                  {summaryBusy && !summaryStream && (
+                    <p className="empty">分析中…</p>
+                  )}
+                  {summaryBusy && summaryStream && (
+                    <p className="body summary-stream">{summaryStream}</p>
+                  )}
+                  {!summaryBusy && !summary && summaryStream && (
+                    <p className="body summary-stream">{summaryStream}</p>
+                  )}
                   {summaryError && (
                     <div className="summary-error">
                       <span>{summaryError}</span>
@@ -673,6 +690,7 @@ export default function App() {
           key={selected.id}
           paper={selected}
           summary={summary}
+          summaryStream={summaryStream}
           summaryBusy={summaryBusy}
           summaryError={summaryError}
           onRetrySummary={() => void open(selected)}

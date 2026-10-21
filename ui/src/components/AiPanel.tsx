@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { askPaper } from '../api/ipc';
+import { askPaperStream } from '../api/ipc';
 import { ipcErrorMessage } from '../lib/ipcError';
 import type { Paper, QaScope, QaTurn, Summary } from '../types';
 
 interface AiPanelProps {
   paper: Paper;
   summary: Summary | null;
+  summaryStream: string;
   summaryBusy: boolean;
   summaryError: string | null;
   onRetrySummary: () => void;
@@ -33,6 +34,7 @@ interface ChatMessage {
   contextTruncated?: boolean;
   contextChars?: number;
   model?: string;
+  streaming?: boolean;
 }
 
 let messageSequence = 0;
@@ -45,6 +47,7 @@ function messageId(): string {
 export default function AiPanel({
   paper,
   summary,
+  summaryStream,
   summaryBusy,
   summaryError,
   onRetrySummary,
@@ -88,22 +91,56 @@ export default function AiPanel({
     if (!question) return;
 
     const requestId = ++requestIdRef.current;
+    const history: QaTurn[] = messages
+      .filter((message) => !message.error && !message.streaming)
+      .slice(-6)
+      .map(({ role, content }) => ({ role, content }));
+
+    let qaScope: QaScope;
+    let page: number | null = currentPage;
+
+    if (mode === 'selection') {
+      qaScope = 'selection';
+    } else if (scope === 'current_page') {
+      qaScope = 'current_page';
+    } else {
+      qaScope = 'full_paper';
+      page = null;
+    }
+
+    const userMessage: ChatMessage = {
+      id: messageId(),
+      role: 'user',
+      content: question,
+      display: mode === 'selection' ? '解释选中内容' : question,
+      scope: qaScope,
+      page,
+    };
+
+    const assistantId = messageId();
     setBusy(true);
+    setTab('chat');
+    setMessages((current) => [
+      ...current,
+      userMessage,
+      {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+        scope: qaScope,
+        page,
+        streaming: true,
+      },
+    ]);
 
     try {
       let context: string;
-      let qaScope: QaScope;
-      let page: number | null = currentPage;
 
       if (mode === 'selection') {
-        qaScope = 'selection';
         context = selectionText;
       } else if (scope === 'current_page') {
-        qaScope = 'current_page';
         context = await getPageText(currentPage);
       } else {
-        qaScope = 'full_paper';
-        page = null;
         context = await getFullText((done, total) =>
           setExtracting({ done, total }),
         );
@@ -115,68 +152,63 @@ export default function AiPanel({
         );
       }
 
-      const history: QaTurn[] = messages
-        .filter((message) => !message.error)
-        .slice(-6)
-        .map(({ role, content }) => ({ role, content }));
-
-      const userMessage: ChatMessage = {
-        id: messageId(),
-        role: 'user',
-        content: question,
-        display:
-          mode === 'selection'
-            ? `解释选中内容：${context.slice(0, 120)}${
-                context.length > 120 ? '…' : ''
-              }`
-            : question,
-        scope: qaScope,
-        page,
-      };
-
-      setMessages((current) => [...current, userMessage]);
-
-      const response = await askPaper({
-        paper,
-        question,
-        scope: qaScope,
-        context,
-        page,
-        history,
-      });
+      const response = await askPaperStream(
+        {
+          paper,
+          question,
+          scope: qaScope,
+          context,
+          page,
+          history,
+        },
+        (delta) => {
+          if (requestId !== requestIdRef.current) return;
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === assistantId
+                ? { ...message, content: message.content + delta }
+                : message,
+            ),
+          );
+        },
+      );
 
       if (requestId !== requestIdRef.current) return;
 
-      setMessages((current) => [
-        ...current,
-        {
-          id: messageId(),
-          role: 'assistant',
-          content: response.answer,
-          scope: response.scope,
-          page: response.page,
-          contextTruncated: response.context_truncated,
-          contextChars: response.context_chars,
-          model: response.model,
-        },
-      ]);
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === assistantId
+            ? {
+                ...message,
+                content: response.answer,
+                scope: response.scope,
+                page: response.page,
+                contextTruncated: response.context_truncated,
+                contextChars: response.context_chars,
+                model: response.model,
+                streaming: false,
+              }
+            : message,
+        ),
+      );
 
       if (mode === 'selection') onClearSelection();
       setDraft('');
     } catch (error: unknown) {
       if (requestId !== requestIdRef.current) return;
 
-      setMessages((current) => [
-        ...current,
-        {
-          id: messageId(),
-          role: 'assistant',
-          content: ipcErrorMessage(error),
-          scope: 'current_page',
-          page: null,
-          error: true,
-        },
-      ]);
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === assistantId
+            ? {
+                ...message,
+                content: ipcErrorMessage(error),
+                error: true,
+                streaming: false,
+              }
+            : message,
+        ),
+      );
     } finally {
       if (requestId === requestIdRef.current) {
         setBusy(false);
@@ -204,7 +236,13 @@ export default function AiPanel({
 
       {tab === 'summary' ? (
         <div className="ai-body">
-          {summaryBusy && <p className="empty">分析中…</p>}
+          {summaryBusy && !summaryStream && <p className="empty">分析中…</p>}
+          {summaryBusy && summaryStream && (
+            <p className="body summary-stream">{summaryStream}</p>
+          )}
+          {!summaryBusy && !summary && summaryStream && (
+            <p className="body summary-stream">{summaryStream}</p>
+          )}
           {!summaryBusy && summaryError && (
             <>
               <div className="error">{summaryError}</div>
@@ -273,6 +311,12 @@ export default function AiPanel({
                   }`}
                 >
                   {message.display ?? message.content}
+                  {message.streaming && !message.content && (
+                    <span className="chat-typing">思考中…</span>
+                  )}
+                  {message.streaming && message.content && (
+                    <span className="chat-cursor">▍</span>
+                  )}
                   {message.contextTruncated && (
                     <div className="chat-note">
                       上下文较长，已省略中间部分（发送 {message.contextChars}{' '}

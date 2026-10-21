@@ -227,9 +227,44 @@ impl<A: PaperSearch, L: LlmProvider, O: PaperSearch> App<A, L, O> {
         })
     }
 
+    /// 流式版本：每次收到增量时调用 `on_delta`，最后返回完整响应。
+    pub async fn ask_paper_stream<F>(
+        &self,
+        request: QaRequest,
+        mut on_delta: F,
+    ) -> Result<QaResponse>
+    where
+        F: FnMut(String) + Send,
+    {
+        let (request, context_truncated, context_chars) = prepare_qa(request)?;
+        let answer = self.llm.ask_paper_stream(&request, &mut on_delta).await?;
+
+        Ok(QaResponse {
+            answer: answer.answer,
+            model: answer.model,
+            prompt_version: answer.prompt_version,
+            scope: request.scope,
+            page: request.page,
+            context_truncated,
+            context_chars,
+        })
+    }
+
     /// 分析论文
     pub async fn summarize(&self, paper: &Paper) -> Result<Summary> {
         self.llm.summarize(paper).await
+    }
+
+    /// 流式论文分析：增量通过 `on_delta` 推送，最后返回结构化摘要。
+    pub async fn summarize_stream<F>(
+        &self,
+        paper: &Paper,
+        mut on_delta: F,
+    ) -> Result<Summary>
+    where
+        F: FnMut(String) + Send,
+    {
+        self.llm.summarize_stream(paper, &mut on_delta).await
     }
 }
 
@@ -595,6 +630,16 @@ mod tests {
             })
         }
 
+        async fn summarize_stream(
+            &self,
+            paper: &Paper,
+            on_delta: &mut (dyn FnMut(String) + Send),
+        ) -> Result<Summary> {
+            let summary = self.summarize(paper).await?;
+            on_delta(summary.detailed.clone());
+            Ok(summary)
+        }
+
         async fn to_english_keywords(&self, _chinese_query: &str) -> Result<String> {
             self.translate_calls.fetch_add(1, Ordering::SeqCst);
 
@@ -620,6 +665,16 @@ mod tests {
                 model: "fake".into(),
                 prompt_version: Answer::PROMPT_VERSION.into(),
             })
+        }
+
+        async fn ask_paper_stream(
+            &self,
+            request: &QaRequest,
+            on_delta: &mut (dyn FnMut(String) + Send),
+        ) -> Result<Answer> {
+            let answer = self.ask_paper(request).await?;
+            on_delta(answer.answer.clone());
+            Ok(answer)
         }
     }
 
@@ -1171,6 +1226,48 @@ mod tests {
         assert_eq!(response.scope, QaScope::CurrentPage);
         assert_eq!(response.page, Some(2));
         assert_eq!(app.llm.answer_calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn summarize_stream_emits_deltas() {
+        let app = app_with_llm(
+            FakeSearch::ok(Vec::new()),
+            FakeLlm::default(),
+            FakeSearch::ok(Vec::new()),
+        );
+
+        let mut deltas = Vec::new();
+        let summary = app
+            .summarize_stream(
+                &paper("p1", "Paper", Source::Arxiv),
+                |delta| deltas.push(delta),
+            )
+            .await
+            .expect("summary stream should succeed");
+
+        assert_eq!(summary.detailed, "detailed");
+        assert_eq!(deltas.concat(), "detailed");
+    }
+
+    #[tokio::test]
+    async fn ask_paper_stream_emits_deltas() {
+        let app = app_with_llm(
+            FakeSearch::ok(Vec::new()),
+            FakeLlm::answering("流式答案"),
+            FakeSearch::ok(Vec::new()),
+        );
+
+        let mut deltas = Vec::new();
+        let response = app
+            .ask_paper_stream(
+                qa_request(QaScope::CurrentPage, "page text"),
+                |delta| deltas.push(delta),
+            )
+            .await
+            .expect("stream should succeed");
+
+        assert_eq!(response.answer, "流式答案");
+        assert_eq!(deltas.concat(), "流式答案");
     }
 
     #[tokio::test]

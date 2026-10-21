@@ -23,7 +23,8 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 
 # --- HTTP ---
-reqwest = { version = "0.13", features = ["json", "query"] }
+reqwest = { version = "0.13", features = ["json", "query", "stream", "gzip", "brotli", "deflate", "zstd"] }
+futures-util = "0.3"
 
 # --- XML ---
 quick-xml = { version = "0.42", features = ["serialize", "overlapped-lists"] }

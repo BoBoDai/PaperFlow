@@ -63,6 +63,7 @@ pub fn run() {
             commands::search_papers,
             commands::browse_feed,
             commands::summarize_paper,
+            commands::summarize_paper_stream,
             commands::health,
             commands::get_llm_settings,
             commands::save_llm_settings,
@@ -70,6 +71,7 @@ pub fn run() {
             commands::fetch_llm_models,
             commands::test_llm_connection,
             commands::ask_paper,
+            commands::ask_paper_stream,
             commands::download_pdf,
         ])
         .run(tauri::generate_context!())

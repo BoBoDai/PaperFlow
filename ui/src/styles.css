@@ -1075,6 +1075,10 @@ body {
   cursor: default;
 }
 
+.summary-stream {
+  white-space: pre-wrap;
+}
+
 .summary-error {
   display: flex;
   align-items: center;
@@ -1350,6 +1354,21 @@ body {
   margin-top: 6px;
   color: var(--fg-dim);
   font-size: 11px;
+}
+
+.chat-typing {
+  color: var(--fg-dim);
+}
+
+.chat-cursor {
+  color: var(--accent);
+  animation: chat-blink 1s steps(1) infinite;
+}
+
+@keyframes chat-blink {
+  50% {
+    opacity: 0;
+  }
 }
 
 .chat-composer {

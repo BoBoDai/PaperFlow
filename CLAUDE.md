@@ -42,11 +42,11 @@ crates/core/  ←  crates/adapters/
 ```
 
 - `crates/core`：领域模型 `Paper`、`FeedPage`、`Summary`、`Source`、`QaRequest` / `QaResponse` / `Answer` 与 `Error`/`Result`。领域内共享的纯逻辑放这里（如 `Paper::dedup_key`）。
-- `crates/adapters`：每个外部依赖一个 trait——`PaperSearch`（`search` 关键词检索 / `feed` 兴趣频道，arXiv 与 OpenAlex 共同实现）、`LlmProvider`（`OpenAiCompatibleClient`，默认 DeepSeek；含 `ask_paper`）、`PaperStore`；另有 `PdfFetcher`（PDF 下载、校验、缓存）。适配器只做外部格式 ↔ 领域类型的翻译。
+- `crates/adapters`：每个外部依赖一个 trait——`PaperSearch`（`search` 关键词检索 / `feed` 兴趣频道，arXiv 与 OpenAlex 共同实现）、`LlmProvider`（`OpenAiCompatibleClient`，默认 DeepSeek；含 `ask_paper` 与 SSE 流式 `ask_paper_stream`）、`PaperStore`；另有 `PdfFetcher`（PDF 下载、校验、缓存）。适配器只做外部格式 ↔ 领域类型的翻译。
 - `crates/usecases`：`App<A, L, O>` 通过泛型注入适配器（不用 `dyn`，规避 `dyn` + `async fn` 的对象安全问题），提供 `search_papers` / `browse_feed` / `summarize` / `ask_paper` 等用例。`search_papers` 先翻译中文查询，再以 arXiv 为主源、OpenAlex 为回退源；`browse_feed` 清洗兴趣、对齐分页 offset 并返回 `FeedPage`；`ask_paper` 负责问题/上下文/历史的字符预算。`dedupe` 是纯函数，可直接单测。
 - `src-tauri/src/lib.rs`：唯一的适配器装配点（`App::new(ArxivHttpClient, OpenAiCompatibleClient, OpenAlexHttpClient)`），接真实实现时只改这里。
 - `src-tauri/src/settings.rs`：`SettingsManager` 管理多服务商列表（`providers` + `active_id`），每个服务商带 `provider` 家族字段（`deepseek` / `openai` / `minimax`），持久化到应用配置目录的 `settings.json`，并把当前服务商解析成 `LlmConfig` 通过共享 `RwLock` 提供给 LLM 客户端；旧版单服务商配置在加载时自动迁移。
-- `src-tauri/src/commands.rs`：IPC command，全部是薄壳（含 `browse_feed` / `ask_paper` / `download_pdf` / `get_llm_settings` / `save_llm_settings`）。
+- `src-tauri/src/commands.rs`：IPC command，全部是薄壳（含 `browse_feed` / `ask_paper` / `ask_paper_stream` / `download_pdf` / `get_llm_settings` / `save_llm_settings`）。`ask_paper_stream` 用 `tauri::ipc::Channel<String>` 推送增量，完整响应作为命令返回值。
 - `src-tauri/src/lib.rs`：`AppState` 还持有 `PdfFetcher`；`download_pdf` 返回 `tauri::ipc::Response`（前端收到 `ArrayBuffer`）。
 - `ui/src/components/ReaderView.tsx` / `PdfPane.tsx` / `AiPanel.tsx`：全屏 PDF 阅读器、页面/选区渲染、AI 摘要与问答面板。
 - `ui/src/lib/pdfjs.ts` / `pdfText.ts`：PDF.js legacy worker 初始化、页面/全文文本提取。
@@ -66,7 +66,7 @@ crates/core/  ←  crates/adapters/
 9. **信息流分页语义：** offset 按 limit 对齐；`has_more` 在去重前按原始页大小计算；offset > 0 的空页视为到底，不再切换数据源；首页 arXiv 为空且 OpenAlex 失败时返回 `Error::Sources`。
 10. **兴趣是前端偏好：** v1 存在 `localStorage`（键 `paperflow.interests.v1`）；跨页按 id + 归一化标题去重；搜索、信息流、LLM 分析使用各自独立的 loading 状态。
 11. **PDF 只经 Rust 下载：** `PdfFetcher` 仅允许 HTTPS 公网地址，拒绝私网/本地地址，限制 32MiB，校验 `%PDF-`，缓存到 app cache；前端通过 `download_pdf` 获取原始字节，PDF.js 不做跨域 fetch。
-12. **论文问答有硬预算：** 选区 8k、当前页 40k、全文 30k 头 + 10k 尾；历史最多 6 轮/12k 字符；prompt 不包含 `pdf_url`；答案必须通过 JSON 结构校验。
+12. **论文问答有硬预算且走流式：** 选区 8k、当前页 40k、全文 30k 头 + 10k 尾；历史最多 6 轮/12k 字符；prompt 不包含 `pdf_url`。问答通过 SSE + Tauri Channel 增量输出，答案为纯文本并做非空校验；摘要等结构化输出仍必须通过 JSON 校验。
 
 ## 当前状态（骨架阶段）
 

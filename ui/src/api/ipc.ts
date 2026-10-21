@@ -5,7 +5,7 @@
  * 只改这个文件。
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { Channel, invoke } from '@tauri-apps/api/core';
 import type {
   ConnectionTestResult,
   FeedPage,
@@ -49,6 +49,19 @@ export async function summarizePaper(paper: Paper): Promise<Summary> {
   return invoke<Summary>('summarize_paper', { paper });
 }
 
+export async function summarizePaperStream(
+  paper: Paper,
+  onDelta: (delta: string) => void,
+): Promise<Summary> {
+  const channel = new Channel<string>();
+  channel.onmessage = onDelta;
+
+  return invoke<Summary>('summarize_paper_stream', {
+    paper,
+    onEvent: channel,
+  });
+}
+
 export async function getLlmSettings(): Promise<LlmSettingsView> {
   return invoke<LlmSettingsView>('get_llm_settings');
 }
@@ -77,6 +90,16 @@ export async function testLlmConnection(
 
 export async function askPaper(request: QaRequest): Promise<QaResponse> {
   return invoke<QaResponse>('ask_paper', { request });
+}
+
+export async function askPaperStream(
+  request: QaRequest,
+  onDelta: (delta: string) => void,
+): Promise<QaResponse> {
+  const channel = new Channel<string>();
+  channel.onmessage = onDelta;
+
+  return invoke<QaResponse>('ask_paper_stream', { request, onEvent: channel });
 }
 
 const pdfRequests = new Map<string, Promise<ArrayBuffer>>();

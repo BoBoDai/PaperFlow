@@ -14,6 +14,8 @@
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
+use futures_util::StreamExt;
+
 use paperflow_core::{
     contains_cjk, Answer, Error, Paper, QaRequest, QaScope, Result, Summary,
 };
@@ -298,8 +300,18 @@ impl LlmConfig {
 pub trait LlmProvider {
     fn is_configured(&self) -> bool;
     async fn summarize(&self, paper: &Paper) -> Result<Summary>;
+    async fn summarize_stream(
+        &self,
+        paper: &Paper,
+        on_delta: &mut (dyn FnMut(String) + Send),
+    ) -> Result<Summary>;
     async fn to_english_keywords(&self, chinese_query: &str) -> Result<String>;
     async fn ask_paper(&self, request: &QaRequest) -> Result<Answer>;
+    async fn ask_paper_stream(
+        &self,
+        request: &QaRequest,
+        on_delta: &mut (dyn FnMut(String) + Send),
+    ) -> Result<Answer>;
 }
 
 // ---------------------------------------------------------------------------
@@ -579,6 +591,7 @@ impl OpenAiCompatibleClient {
         messages: Vec<serde_json::Value>,
         max_tokens: u32,
         timeout: Duration,
+        json_mode: bool,
     ) -> Result<String> {
         if !config.is_configured() {
             return Err(Error::Config(
@@ -591,7 +604,7 @@ impl OpenAiCompatibleClient {
             return Err(Error::Config("LLM 模型名不能为空".into()));
         }
 
-        let body = build_chat_body(config, messages, max_tokens);
+        let body = build_chat_body(config, messages, max_tokens, json_mode, false);
 
         let response = self
             .http
@@ -687,7 +700,7 @@ impl OpenAiCompatibleClient {
             "role": "user",
             "content": "ping",
         })];
-        let body = build_chat_body(config, messages, 16);
+        let body = build_chat_body(config, messages, 16, false, false);
 
         let started = Instant::now();
         let response = self
@@ -717,6 +730,114 @@ impl OpenAiCompatibleClient {
             request_id,
         })
     }
+
+    /// Send a streaming chat request and return the accumulated answer text.
+    async fn stream_chat(
+        &self,
+        config: &LlmConfig,
+        messages: Vec<serde_json::Value>,
+        max_tokens: u32,
+        timeout: Duration,
+        on_delta: &mut (dyn FnMut(String) + Send),
+    ) -> Result<String> {
+        if !config.is_configured() {
+            return Err(Error::Config("请先在设置中填写 API key".into()));
+        }
+        let base_url = normalize_base_url(&config.base_url).map_err(Error::Config)?;
+        if config.model.trim().is_empty() {
+            return Err(Error::Config("LLM 模型名不能为空".into()));
+        }
+
+        let body = build_chat_body(config, messages, max_tokens, false, true);
+
+        let response = self
+            .http
+            .post(format!("{base_url}/chat/completions"))
+            .bearer_auth(config.api_key.trim())
+            .timeout(timeout)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| Error::Llm(transport_error("LLM stream failed", e).to_string()))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let headers = response.headers().clone();
+            let body = response.text().await.unwrap_or_default();
+            return Err(Error::Llm(
+                map_http_error(status, &headers, &body).to_string(),
+            ));
+        }
+
+        let mut stream = response.bytes_stream();
+        let mut buffer = String::new();
+        let mut full_body = String::new();
+        let mut answer_stream = AnswerStream::default();
+        let mut saw_event = false;
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| {
+                Error::Llm(transport_error("failed to read LLM stream", e).to_string())
+            })?;
+            let text = String::from_utf8_lossy(&chunk);
+            full_body.push_str(&text);
+            buffer.push_str(&text);
+
+            while let Some((index, length)) = next_sse_event(&buffer) {
+                let event: String = buffer.drain(..index + length).collect();
+
+                for line in event.lines() {
+                    let Some(data) = line.strip_prefix("data:") else {
+                        continue;
+                    };
+                    let data = data.trim();
+                    if data.is_empty() {
+                        continue;
+                    }
+
+                    saw_event = true;
+                    if data == "[DONE]" {
+                        continue;
+                    }
+
+                    match serde_json::from_str::<StreamChunk>(data) {
+                        Ok(parsed) => {
+                            if let Some(content) = parsed
+                                .choices
+                                .into_iter()
+                                .next()
+                                .and_then(|choice| choice.delta.content)
+                            {
+                                let out = answer_stream.push(&content);
+                                if !out.is_empty() {
+                                    on_delta(out);
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, data, "ignoring malformed SSE chunk");
+                        }
+                    }
+                }
+            }
+        }
+
+        if !saw_event {
+            // Some gateways ignore stream=true and return a normal completion.
+            let content = parse_chat_content(&full_body)?;
+            on_delta(content.clone());
+            return Ok(content);
+        }
+
+        let answer = answer_stream.finish();
+        if answer.is_empty() {
+            return Err(Error::InvalidLlmOutput(
+                "LLM returned an empty response".into(),
+            ));
+        }
+
+        Ok(answer)
+    }
 }
 
 impl LlmProvider for OpenAiCompatibleClient {
@@ -730,30 +851,38 @@ impl LlmProvider for OpenAiCompatibleClient {
         let config = self.current_config()?;
         tracing::info!(id = %paper.id, model = %config.model, "requesting paper summary");
 
-        let authors = paper.authors.join(", ");
-        let categories = paper.categories.join(", ");
-        let user = format!(
-            "Title: {}\nAuthors: {}\nCategories: {}\nAbstract:\n{}",
-            paper.title,
-            if authors.is_empty() { "unknown" } else { &authors },
-            if categories.is_empty() {
-                "unknown"
-            } else {
-                &categories
-            },
-            paper.abstract_text,
-        );
-
-        let messages = vec![
-            serde_json::json!({ "role": "system", "content": SUMMARY_SYSTEM_PROMPT }),
-            serde_json::json!({ "role": "user", "content": user }),
-        ];
-
         let content = self
-            .chat(&config, messages, 4096, Duration::from_secs(120))
+            .chat(
+                &config,
+                summary_messages(paper),
+                4096,
+                Duration::from_secs(120),
+                false,
+            )
             .await?;
 
-        parse_summary(&content, config.model.trim())
+        parse_summary_text(&content, config.model.trim())
+    }
+
+    async fn summarize_stream(
+        &self,
+        paper: &Paper,
+        on_delta: &mut (dyn FnMut(String) + Send),
+    ) -> Result<Summary> {
+        let config = self.current_config()?;
+        tracing::info!(id = %paper.id, model = %config.model, "streaming paper summary");
+
+        let content = self
+            .stream_chat(
+                &config,
+                summary_messages(paper),
+                4096,
+                Duration::from_secs(300),
+                on_delta,
+            )
+            .await?;
+
+        parse_summary_text(&content, config.model.trim())
     }
 
     async fn to_english_keywords(&self, chinese_query: &str) -> Result<String> {
@@ -766,7 +895,7 @@ impl LlmProvider for OpenAiCompatibleClient {
         ];
 
         let content = self
-            .chat(&config, messages, 512, Duration::from_secs(45))
+            .chat(&config, messages, 512, Duration::from_secs(45), true)
             .await?;
 
         parse_keywords(&content)
@@ -783,11 +912,134 @@ impl LlmProvider for OpenAiCompatibleClient {
 
         let messages = build_qa_messages(request);
         let content = self
-            .chat(&config, messages, 4096, Duration::from_secs(180))
+            .chat(&config, messages, 4096, Duration::from_secs(180), false)
             .await?;
 
         parse_answer(&content, config.model.trim())
     }
+
+    async fn ask_paper_stream(
+        &self,
+        request: &QaRequest,
+        on_delta: &mut (dyn FnMut(String) + Send),
+    ) -> Result<Answer> {
+        let config = self.current_config()?;
+        tracing::info!(
+            id = %request.paper.id,
+            scope = ?request.scope,
+            model = %config.model,
+            "streaming paper answer"
+        );
+
+        let content = self
+            .stream_chat(
+                &config,
+                build_qa_messages(request),
+                4096,
+                Duration::from_secs(300),
+                on_delta,
+            )
+            .await?;
+
+        parse_answer(&content, config.model.trim())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamChunk {
+    #[serde(default)]
+    choices: Vec<StreamChoice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamChoice {
+    #[serde(default)]
+    delta: StreamDelta,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct StreamDelta {
+    #[serde(default)]
+    content: Option<String>,
+}
+
+fn next_sse_event(buffer: &str) -> Option<(usize, usize)> {
+    let lf = buffer.find("\n\n").map(|index| (index, 2));
+    let crlf = buffer.find("\r\n\r\n").map(|index| (index, 4));
+
+    match (lf, crlf) {
+        (Some(left), Some(right)) => Some(if left.0 <= right.0 { left } else { right }),
+        (Some(left), None) => Some(left),
+        (None, Some(right)) => Some(right),
+        (None, None) => None,
+    }
+}
+
+/// Holds back MiniMax-style `<think>...</think>` reasoning while streaming.
+#[derive(Default)]
+struct AnswerStream {
+    raw: String,
+    emitted: usize,
+    answer: String,
+    saw_think: bool,
+    thinking_done: bool,
+}
+
+impl AnswerStream {
+    fn push(&mut self, delta: &str) -> String {
+        self.raw.push_str(delta);
+        let mut out = String::new();
+
+        if self.saw_think {
+            if self.thinking_done {
+                out.push_str(&self.raw[self.emitted..]);
+                self.emitted = self.raw.len();
+            } else if let Some(position) = self.raw[self.emitted..].find("</think") {
+                let position = self.emitted + position;
+                if let Some(close) = self.raw[position..].find('>') {
+                    self.thinking_done = true;
+                    self.emitted = position + close + 1;
+                    out.push_str(&self.raw[self.emitted..]);
+                    self.emitted = self.raw.len();
+                }
+            }
+        } else if let Some(position) = self.raw.find("<think") {
+            self.saw_think = true;
+            out.push_str(&self.raw[self.emitted..position]);
+            self.emitted = position;
+        } else {
+            let safe = safe_prefix_len(&self.raw);
+            if safe > self.emitted {
+                out.push_str(&self.raw[self.emitted..safe]);
+                self.emitted = safe;
+            }
+        }
+
+        self.answer.push_str(&out);
+        out
+    }
+
+    fn finish(&self) -> String {
+        if self.saw_think && !self.thinking_done {
+            return String::new();
+        }
+
+        self.answer.trim().to_string()
+    }
+}
+
+/// Largest prefix length that does not end with a partial `<think` tag.
+fn safe_prefix_len(raw: &str) -> usize {
+    const TAG: &str = "<think";
+    let length = raw.len();
+
+    for size in (1..TAG.len()).rev() {
+        if raw.ends_with(&TAG[..size]) {
+            return length - size;
+        }
+    }
+
+    length
 }
 
 // ---------------------------------------------------------------------------
@@ -799,6 +1051,8 @@ fn build_chat_body(
     config: &LlmConfig,
     messages: Vec<serde_json::Value>,
     max_tokens: u32,
+    json_mode: bool,
+    stream: bool,
 ) -> serde_json::Value {
     let capabilities = config.capabilities();
 
@@ -806,12 +1060,12 @@ fn build_chat_body(
         "model": config.model.trim(),
         "messages": messages,
         "temperature": 0.2,
-        "stream": false,
+        "stream": stream,
     });
 
     body[capabilities.max_tokens_field.as_str()] = serde_json::json!(max_tokens);
 
-    if capabilities.json_mode {
+    if json_mode && capabilities.json_mode {
         body["response_format"] = serde_json::json!({ "type": "json_object" });
     }
 
@@ -876,13 +1130,39 @@ pub fn normalize_base_url(raw: &str) -> std::result::Result<String, String> {
 }
 
 const SUMMARY_SYSTEM_PROMPT: &str = r#"You are an academic paper analyst.
-Analyze the paper and reply with JSON only. The JSON object must have exactly these fields:
-{
-  "short": "one-sentence summary in Simplified Chinese",
-  "detailed": "a detailed analysis in Simplified Chinese, 3-5 sentences",
-  "key_points": ["3-6 key points in Simplified Chinese"]
+Analyze the paper and reply in Simplified Chinese using exactly this plain-text format:
+一句话：<one-sentence summary>
+详细分析：
+<3-5 sentences of analysis>
+要点：
+- <key point>
+- <key point>
+Do not use JSON, markdown fences, or add any text outside these sections."#;
+
+fn summary_messages(paper: &Paper) -> Vec<serde_json::Value> {
+    let authors = paper.authors.join(", ");
+    let categories = paper.categories.join(", ");
+    let user = format!(
+        "Title: {}\nAuthors: {}\nCategories: {}\nAbstract:\n{}",
+        paper.title,
+        if authors.is_empty() {
+            "unknown"
+        } else {
+            &authors
+        },
+        if categories.is_empty() {
+            "unknown"
+        } else {
+            &categories
+        },
+        paper.abstract_text,
+    );
+
+    vec![
+        serde_json::json!({ "role": "system", "content": SUMMARY_SYSTEM_PROMPT }),
+        serde_json::json!({ "role": "user", "content": user }),
+    ]
 }
-Do not use markdown fences, comments, or any text outside the JSON object."#;
 
 const KEYWORDS_SYSTEM_PROMPT: &str = r#"Translate the user's Chinese academic search query into concise English keywords for arXiv and OpenAlex.
 Preserve well-known acronyms such as LLM, RAG, GAN, and Transformer.
@@ -895,8 +1175,7 @@ Use only the paper metadata and context supplied in the final user message. If t
 If the context contains page markers such as [第 3 页], cite the relevant page in your answer.
 If the context contains a marker saying the middle was omitted, explicitly say that the omitted section was not available.
 The scope can be 选中文本, 当前页, or 全文. For 选中文本, the excerpt may be incomplete; explain it in the paper's context.
-Reply with JSON only, exactly in this shape: {"answer": "..."}
-Do not wrap the JSON in markdown fences and do not add text outside the JSON object."#;
+Reply with plain text in Simplified Chinese. Do not wrap the answer in JSON or markdown fences."#;
 
 fn build_qa_messages(request: &QaRequest) -> Vec<serde_json::Value> {
     let mut messages = vec![
@@ -967,17 +1246,8 @@ fn qa_user_prompt(request: &QaRequest) -> String {
     )
 }
 
-#[derive(Debug, Deserialize)]
-struct AnswerPayload {
-    answer: String,
-}
-
 pub(crate) fn parse_answer(content: &str, model: &str) -> Result<Answer> {
-    let payload: AnswerPayload = serde_json::from_str(content).map_err(|e| {
-        Error::InvalidLlmOutput(format!("answer JSON does not match the schema: {e}"))
-    })?;
-
-    let answer = payload.answer.trim().to_string();
+    let answer = strip_think_block(content).trim().to_string();
     if answer.is_empty() {
         return Err(Error::InvalidLlmOutput("answer is empty".into()));
     }
@@ -1083,35 +1353,85 @@ fn parse_models_response(body: &str) -> std::result::Result<Vec<String>, LlmEndp
     Ok(models)
 }
 
-#[derive(Debug, Deserialize)]
-struct SummaryPayload {
-    short: String,
-    detailed: String,
-    key_points: Vec<String>,
-}
+pub(crate) fn parse_summary_text(content: &str, model: &str) -> Result<Summary> {
+    let text = strip_think_block(content).trim();
+    if text.is_empty() {
+        return Err(Error::InvalidLlmOutput("summary text is empty".into()));
+    }
 
-pub(crate) fn parse_summary(content: &str, model: &str) -> Result<Summary> {
-    let payload: SummaryPayload = serde_json::from_str(content).map_err(|e| {
-        Error::InvalidLlmOutput(format!("summary JSON does not match the schema: {e}"))
-    })?;
+    let mut short = String::new();
+    let mut detailed = String::new();
+    let mut key_points = Vec::new();
+    let mut section = 0_u8;
 
-    let short = payload.short.trim().to_string();
-    let detailed = payload.detailed.trim().to_string();
-    let key_points: Vec<String> = payload
-        .key_points
-        .into_iter()
-        .map(|point| point.trim().to_string())
-        .filter(|point| !point.is_empty())
-        .collect();
+    for line in text.lines() {
+        let trimmed = line.trim();
+
+        if let Some(rest) = strip_label(trimmed, &["一句话概括", "一句话"]) {
+            section = 1;
+            if !rest.is_empty() {
+                short = rest.to_string();
+            }
+            continue;
+        }
+        if let Some(rest) = strip_label(trimmed, &["详细分析", "分析"]) {
+            section = 2;
+            if !rest.is_empty() {
+                detailed.push_str(rest);
+                detailed.push('\n');
+            }
+            continue;
+        }
+        if let Some(rest) = strip_label(trimmed, &["关键要点", "要点"]) {
+            section = 3;
+            let point = rest.trim_start_matches(['-', '•', '*']).trim();
+            if !point.is_empty() {
+                key_points.push(point.to_string());
+            }
+            continue;
+        }
+
+        match section {
+            1 if !trimmed.is_empty() => {
+                if !short.is_empty() {
+                    short.push(' ');
+                }
+                short.push_str(trimmed);
+            }
+            2 => {
+                detailed.push_str(line);
+                detailed.push('\n');
+            }
+            3 => {
+                let point = trimmed.trim_start_matches(['-', '•', '*']).trim();
+                if !point.is_empty() {
+                    key_points.push(point.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let detailed = detailed.trim().to_string();
+
+    if short.trim().is_empty() || detailed.is_empty() {
+        tracing::warn!("summary response did not follow the expected sections");
+    }
+
+    let short = if short.trim().is_empty() {
+        first_line(text)
+    } else {
+        short.trim().to_string()
+    };
+
+    let detailed = if detailed.is_empty() {
+        text.to_string()
+    } else {
+        detailed
+    };
 
     if short.is_empty() {
-        return Err(Error::InvalidLlmOutput("summary.short is empty".into()));
-    }
-    if detailed.is_empty() {
-        return Err(Error::InvalidLlmOutput("summary.detailed is empty".into()));
-    }
-    if key_points.is_empty() {
-        return Err(Error::InvalidLlmOutput("summary.key_points is empty".into()));
+        return Err(Error::InvalidLlmOutput("summary is empty".into()));
     }
 
     Ok(Summary {
@@ -1121,6 +1441,30 @@ pub(crate) fn parse_summary(content: &str, model: &str) -> Result<Summary> {
         model: model.to_string(),
         prompt_version: Summary::PROMPT_VERSION.into(),
     })
+}
+
+fn strip_label<'a>(line: &'a str, labels: &[&str]) -> Option<&'a str> {
+    labels.iter().find_map(|label| {
+        let rest = line.strip_prefix(label)?.trim_start();
+
+        // Only treat the label as a section header when it stands alone or is
+        // followed by a colon. Content lines may also start with these words.
+        if !rest.is_empty() && !rest.starts_with([':', '：']) {
+            return None;
+        }
+
+        Some(rest.trim_start_matches([':', '：']).trim())
+    })
+}
+
+fn first_line(text: &str) -> String {
+    text.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or_default()
+        .chars()
+        .take(200)
+        .collect()
 }
 
 #[derive(Debug, Deserialize)]
@@ -1198,16 +1542,16 @@ mod tests {
 
     #[test]
     fn build_body_uses_profile_capabilities() {
-        let deepseek = build_chat_body(&config(ProviderProfileId::DeepSeek), vec![], 10);
+        let deepseek = build_chat_body(&config(ProviderProfileId::DeepSeek), vec![], 10, true, false);
         assert_eq!(deepseek["response_format"]["type"], "json_object");
         assert_eq!(deepseek["max_tokens"].as_u64(), Some(10));
         assert!(deepseek.get("max_completion_tokens").is_none());
 
-        let openai = build_chat_body(&config(ProviderProfileId::OpenAi), vec![], 10);
+        let openai = build_chat_body(&config(ProviderProfileId::OpenAi), vec![], 10, true, false);
         assert_eq!(openai["max_completion_tokens"].as_u64(), Some(10));
         assert!(openai.get("max_tokens").is_none());
 
-        let minimax = build_chat_body(&config(ProviderProfileId::MiniMax), vec![], 10);
+        let minimax = build_chat_body(&config(ProviderProfileId::MiniMax), vec![], 10, true, false);
         assert!(minimax.get("response_format").is_none());
         assert!(minimax.get("thinking").is_none());
         assert_eq!(minimax["max_completion_tokens"].as_u64(), Some(10));
@@ -1215,7 +1559,7 @@ mod tests {
 
         let mut minimax_disabled = config(ProviderProfileId::MiniMax);
         minimax_disabled.compat.thinking_mode = Some(ThinkingMode::Disabled);
-        let body = build_chat_body(&minimax_disabled, vec![], 10);
+        let body = build_chat_body(&minimax_disabled, vec![], 10, true, false);
         assert_eq!(body["thinking"]["type"], "disabled");
     }
 
@@ -1229,7 +1573,7 @@ mod tests {
             thinking_format: Some(ThinkingFormat::EnableThinking),
         };
 
-        let body = build_chat_body(&config, vec![], 10);
+        let body = build_chat_body(&config, vec![], 10, true, false);
         assert!(body.get("response_format").is_none());
         assert_eq!(body["max_completion_tokens"].as_u64(), Some(10));
         assert_eq!(body["enable_thinking"].as_bool(), Some(false));
@@ -1243,7 +1587,7 @@ mod tests {
             ..LlmCompat::default()
         };
 
-        let body = build_chat_body(&config, vec![], 10);
+        let body = build_chat_body(&config, vec![], 10, true, false);
         assert_eq!(body["thinking"]["type"], "adaptive");
     }
 
@@ -1304,33 +1648,32 @@ mod tests {
     }
 
     #[test]
-    fn parses_valid_summary() {
-        let content =
-            r#"{"short":"一句话","detailed":"详细分析","key_points":["要点一","要点二"]}"#;
-        let summary = parse_summary(content, "deepseek-chat").expect("summary should parse");
+    fn parses_plain_text_summary() {
+        let content = "一句话：这是概括。\n详细分析：\n分析与方法。\n更多分析。\n要点：\n- 要点一\n- 要点二";
+        let summary =
+            parse_summary_text(content, "deepseek-chat").expect("summary should parse");
 
-        assert_eq!(summary.short, "一句话");
-        assert_eq!(summary.detailed, "详细分析");
+        assert_eq!(summary.short, "这是概括。");
+        assert_eq!(summary.detailed, "分析与方法。\n更多分析。");
         assert_eq!(summary.key_points, ["要点一", "要点二"]);
         assert_eq!(summary.model, "deepseek-chat");
         assert_eq!(summary.prompt_version, Summary::PROMPT_VERSION);
     }
 
     #[test]
-    fn rejects_summary_missing_fields() {
-        assert!(matches!(
-            parse_summary(r#"{"short":"x"}"#, "m"),
-            Err(Error::InvalidLlmOutput(_))
-        ));
+    fn parses_summary_without_headings() {
+        let summary = parse_summary_text("这是第一行。\n这是第二行。", "m")
+            .expect("summary should parse");
+
+        assert_eq!(summary.short, "这是第一行。");
+        assert_eq!(summary.detailed, "这是第一行。\n这是第二行。");
+        assert!(summary.key_points.is_empty());
     }
 
     #[test]
-    fn rejects_summary_without_key_points() {
+    fn rejects_empty_summary() {
         assert!(matches!(
-            parse_summary(
-                r#"{"short":"x","detailed":"y","key_points":[]}"#,
-                "m"
-            ),
+            parse_summary_text("   ", "m"),
             Err(Error::InvalidLlmOutput(_))
         ));
     }
@@ -1436,8 +1779,7 @@ mod tests {
 
     #[test]
     fn parses_valid_answer() {
-        let answer =
-            parse_answer(r#"{"answer":"这是解释"}"#, "model").expect("answer should parse");
+        let answer = parse_answer("这是解释", "model").expect("answer should parse");
 
         assert_eq!(answer.answer, "这是解释");
         assert_eq!(answer.model, "model");
@@ -1447,8 +1789,42 @@ mod tests {
     #[test]
     fn rejects_empty_answer() {
         assert!(matches!(
-            parse_answer(r#"{"answer":"   "}"#, "model"),
+            parse_answer("   ", "model"),
             Err(Error::InvalidLlmOutput(_))
         ));
+    }
+
+    #[test]
+    fn finds_sse_events_with_lf_and_crlf() {
+        assert_eq!(next_sse_event("data: a\n\n"), Some((7, 2)));
+        assert_eq!(next_sse_event("data: a\r\n\r\n"), Some((7, 4)));
+        assert_eq!(next_sse_event("data: a"), None);
+    }
+
+    #[test]
+    fn streams_plain_text_immediately() {
+        let mut stream = AnswerStream::default();
+
+        assert_eq!(stream.push("Hello "), "Hello ");
+        assert_eq!(stream.push("world"), "world");
+        assert_eq!(stream.finish(), "Hello world");
+    }
+
+    #[test]
+    fn holds_back_partial_think_tags() {
+        let mut stream = AnswerStream::default();
+
+        assert_eq!(stream.push("<thi"), "");
+        assert_eq!(stream.push("nk>reasoning"), "");
+        assert_eq!(stream.push(" more</think>answer"), "answer");
+        assert_eq!(stream.finish(), "answer");
+    }
+
+    #[test]
+    fn rejects_unclosed_think_block() {
+        let mut stream = AnswerStream::default();
+
+        assert_eq!(stream.push("<think>reasoning"), "");
+        assert_eq!(stream.finish(), "");
     }
 }
