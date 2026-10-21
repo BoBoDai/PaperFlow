@@ -144,5 +144,5 @@ PDF.js 的 worker、cmaps 和 standard fonts 在构建时复制到 `ui/dist/`。
 - [ ] `adapters/storage.rs` —— 只有 trait，没有 SQLite 实现
 - [ ] 后台调度器（定时抓取 + 通知）
 - [ ] `ui/src/types.ts` 是手写的 Rust 类型镜像，应该用 ts-rs 生成
-- [ ] 前端样式方案（Tailwind v4 + shadcn/ui）
+- [x] 前端样式方案 —— Tailwind CSS v4 utility-first（shadcn/ui 暂未引入）
 - [ ] 三平台各自验证一次 WebView 渲染差异

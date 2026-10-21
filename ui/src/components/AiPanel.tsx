@@ -218,16 +218,24 @@ export default function AiPanel({
   };
 
   return (
-    <aside className="ai-panel">
-      <div className="ai-tabs">
+    <aside className="flex min-h-0 flex-col bg-bg-raised">
+      <div className="flex border-b border-border">
         <button
-          className={`ai-tab ${tab === 'chat' ? 'ai-tab--active' : ''}`}
+          className={`flex-1 border-b-2 px-3 py-2.5 text-[13px] ${
+            tab === 'chat'
+              ? 'border-accent text-fg'
+              : 'border-transparent text-fg-dim'
+          }`}
           onClick={() => setTab('chat')}
         >
           问答
         </button>
         <button
-          className={`ai-tab ${tab === 'summary' ? 'ai-tab--active' : ''}`}
+          className={`flex-1 border-b-2 px-3 py-2.5 text-[13px] ${
+            tab === 'summary'
+              ? 'border-accent text-fg'
+              : 'border-transparent text-fg-dim'
+          }`}
           onClick={() => setTab('summary')}
         >
           分析
@@ -235,70 +243,81 @@ export default function AiPanel({
       </div>
 
       {tab === 'summary' ? (
-        <div className="ai-body">
-          {summaryBusy && !summaryStream && <p className="empty">分析中…</p>}
+        <div className="flex-1 overflow-y-auto px-4 py-3.5">
+          {summaryBusy && !summaryStream && (
+            <p className="px-4 py-6 text-[13px] text-fg-dim">分析中…</p>
+          )}
           {summaryBusy && summaryStream && (
-            <p className="body summary-stream">{summaryStream}</p>
+            <p className="mb-2.5 whitespace-pre-wrap">{summaryStream}</p>
           )}
           {!summaryBusy && !summary && summaryStream && (
-            <p className="body summary-stream">{summaryStream}</p>
+            <p className="mb-2.5 whitespace-pre-wrap">{summaryStream}</p>
           )}
           {!summaryBusy && summaryError && (
             <>
-              <div className="error">{summaryError}</div>
-              <button className="ghost-btn" onClick={onRetrySummary}>
+              <div className="mb-3.5 rounded-lg border border-danger px-3.5 py-2.5 text-[13px] text-danger">
+                {summaryError}
+              </div>
+              <button
+                className="rounded-md border border-border px-3 py-1 text-xs text-fg-dim hover:border-accent hover:text-accent disabled:opacity-45"
+                onClick={onRetrySummary}
+              >
                 重试分析
               </button>
             </>
           )}
           {!summaryBusy && !summaryError && summary && (
             <>
-              <p className="body">{summary.short}</p>
-              <p className="body">{summary.detailed}</p>
-              <ul className="points">
+              <p className="mb-2.5 whitespace-pre-wrap">{summary.short}</p>
+              <p className="mb-2.5 whitespace-pre-wrap">{summary.detailed}</p>
+              <ul className="m-0 pl-5">
                 {summary.key_points.map((point, index) => (
-                  <li key={index}>{point}</li>
+                  <li key={index} className="mb-1">
+                    {point}
+                  </li>
                 ))}
               </ul>
-              <p className="meta">
+              <p className="m-0 text-xs text-fg-dim">
                 模型 {summary.model} · prompt {summary.prompt_version}
               </p>
             </>
           )}
           {!summaryBusy && !summaryError && !summary && (
-            <p className="empty">尚未生成分析。</p>
+            <p className="px-4 py-6 text-[13px] text-fg-dim">
+              尚未生成分析。
+            </p>
           )}
         </div>
       ) : (
         <>
-          <div className="ai-body chat-body">
-            <div className="chat-controls">
-              <div className="scope-switch">
+          <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-4 py-3.5">
+            <div className="flex items-center justify-between gap-2 border-b border-border pb-2">
+              <div className="flex gap-1">
                 <button
-                  className="ghost-btn"
+                  className="rounded-md border border-border px-3 py-1 text-xs text-fg-dim hover:border-accent hover:text-accent aria-pressed:border-accent aria-pressed:text-accent disabled:opacity-45"
                   aria-pressed={scope === 'current_page'}
                   onClick={() => setScope('current_page')}
                 >
                   当前页
                 </button>
                 <button
-                  className="ghost-btn"
+                  className="rounded-md border border-border px-3 py-1 text-xs text-fg-dim hover:border-accent hover:text-accent aria-pressed:border-accent aria-pressed:text-accent disabled:opacity-45"
                   aria-pressed={scope === 'full_paper'}
                   onClick={() => setScope('full_paper')}
                 >
                   全文
                 </button>
               </div>
-              <span className="meta">
+              <span className="text-xs text-fg-dim">
                 {scope === 'current_page'
                   ? `第 ${currentPage} 页`
                   : '全文（超长时截断）'}
               </span>
             </div>
 
-            <div className="chat-list">
+            <div className="flex flex-col gap-2.5">
               {messages.length === 0 && (
-                <p className="empty">
+                <p className="px-4 py-6 text-[13px] text-fg-dim">
                   基于 PDF 内容提问。选中文字后可以让 AI 解释。
                 </p>
               )}
@@ -306,25 +325,31 @@ export default function AiPanel({
               {messages.map((message) => (
                 <div
                   key={message.id}
-                  className={`chat-bubble chat-bubble--${message.role} ${
-                    message.error ? 'chat-bubble--error' : ''
-                  }`}
+                  className={`max-w-[92%] whitespace-pre-wrap break-words rounded-[10px] border px-2.5 py-2 text-[13px] leading-relaxed select-text ${
+                    message.role === 'user'
+                      ? 'self-end bg-bg-hover'
+                      : 'self-start bg-bg'
+                  } ${message.error ? 'border-danger text-danger' : 'border-border'}`}
                 >
                   {message.display ?? message.content}
                   {message.streaming && !message.content && (
-                    <span className="chat-typing">思考中…</span>
+                    <span className="text-fg-dim">思考中…</span>
                   )}
                   {message.streaming && message.content && (
-                    <span className="chat-cursor">▍</span>
+                    <span className="animate-[chat-blink_1s_steps(1)_infinite] text-accent">
+                      ▍
+                    </span>
                   )}
                   {message.contextTruncated && (
-                    <div className="chat-note">
+                    <div className="mt-1.5 text-[11px] text-fg-dim">
                       上下文较长，已省略中间部分（发送 {message.contextChars}{' '}
                       字符）
                     </div>
                   )}
                   {message.model && (
-                    <div className="chat-note">模型 {message.model}</div>
+                    <div className="mt-1.5 text-[11px] text-fg-dim">
+                      模型 {message.model}
+                    </div>
                   )}
                 </div>
               ))}
@@ -332,12 +357,14 @@ export default function AiPanel({
             </div>
           </div>
 
-          <div className="chat-composer">
+          <div className="border-t border-border px-3 py-2.5">
             {selectionText && (
-              <div className="selection-card">
-                <span>已选中 {selectionText.length} 字符</span>
+              <div className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-dashed border-accent px-2.5 py-2 text-xs text-fg-dim">
+                <span className="truncate">
+                  已选中 {selectionText.length} 字符
+                </span>
                 <button
-                  className="ghost-btn"
+                  className="rounded-md border border-border px-3 py-1 text-xs text-fg-dim hover:border-accent hover:text-accent disabled:opacity-45"
                   disabled={busy || !pdfReady}
                   onClick={() => void send('', 'selection')}
                 >
@@ -347,12 +374,13 @@ export default function AiPanel({
             )}
 
             {extracting && (
-              <p className="meta">
+              <p className="m-0 text-xs text-fg-dim">
                 正在提取全文… {extracting.done}/{extracting.total} 页
               </p>
             )}
 
             <textarea
+              className="max-h-40 min-h-16 w-full resize-none rounded-lg border border-border bg-bg px-2.5 py-2 text-[13px] text-fg outline-none focus:border-accent disabled:opacity-60"
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {
@@ -376,12 +404,12 @@ export default function AiPanel({
               maxLength={2000}
             />
 
-            <div className="chat-composer-actions">
-              <span className="meta">
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <span className="text-xs text-fg-dim">
                 内容会发送到当前模型服务商
               </span>
               <button
-                className="chat-send"
+                className="rounded-md border border-accent bg-accent px-4 py-[7px] text-[12.5px] text-white disabled:opacity-45"
                 disabled={!pdfReady || busy || !draft.trim()}
                 onClick={() => void send(draft, 'typed')}
               >

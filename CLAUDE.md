@@ -78,7 +78,7 @@ crates/core/  ←  crates/adapters/
 - 兴趣推荐流：侧边栏（推荐 / 搜索 / 兴趣）+ 最新论文频道 + 自动加载/加载更多。
 - 内置 PDF 阅读器：Rust 下载/缓存、PDF.js 渲染、选区解释、当前页/全文问答；PDF.js worker 与 cmaps 通过 Vite 静态复制。
 - `PaperStore`：只有 trait，没有 SQLite 实现（`crates/adapters/src/storage.rs`，表结构草案见该文件文档注释）。
-- `ui/src/styles.css`：原生 CSS，样式方案尚未迁移到 Tailwind v4 + shadcn/ui。
+- `ui/src/styles.css`：Tailwind CSS v4 入口，只保留 `@theme` 设计 token、base 样式和 PDF.js `textLayer` 必需规则；组件样式全部使用 utility classes。
 
 ## 新增一条 IPC 链路的完整改法
 

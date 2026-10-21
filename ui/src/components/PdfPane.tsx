@@ -157,17 +157,17 @@ export default function PdfPane({
   };
 
   return (
-    <div className="reader-pdf">
-      <div className="reader-toolbar">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs">
         <button
-          className="ghost-btn"
+          className="rounded-md border border-border px-3 py-1 text-xs text-fg-dim hover:border-accent hover:text-accent disabled:opacity-45"
           onClick={() => onPageChange(page - 1)}
           disabled={page <= 1}
         >
           上一页
         </button>
         <input
-          className="page-input"
+          className="w-[52px] rounded-md border border-border bg-bg px-1.5 py-1 text-center text-fg outline-none focus:border-accent"
           value={pageInput}
           onChange={(event) =>
             setPageInput(event.target.value.replace(/[^\d]/g, ''))
@@ -178,33 +178,33 @@ export default function PdfPane({
           }}
           aria-label="页码"
         />
-        <span className="meta">/ {numPages}</span>
+        <span className="text-xs text-fg-dim">/ {numPages}</span>
         <button
-          className="ghost-btn"
+          className="rounded-md border border-border px-3 py-1 text-xs text-fg-dim hover:border-accent hover:text-accent disabled:opacity-45"
           onClick={() => onPageChange(page + 1)}
           disabled={page >= numPages}
         >
           下一页
         </button>
 
-        <span className="toolbar-spacer" />
+        <span className="flex-1" />
 
         <button
-          className="ghost-btn"
+          className="rounded-md border border-border px-3 py-1 text-xs text-fg-dim hover:border-accent hover:text-accent disabled:opacity-45"
           onClick={() => onScaleChange(clampScale(scale - SCALE_STEP))}
           disabled={scale <= MIN_SCALE}
         >
           −
         </button>
         <button
-          className="ghost-btn"
+          className="rounded-md border border-border px-3 py-1 text-xs text-fg-dim hover:border-accent hover:text-accent disabled:opacity-45"
           onClick={() => onScaleChange(1)}
           title="重置缩放"
         >
           {Math.round(scale * 100)}%
         </button>
         <button
-          className="ghost-btn"
+          className="rounded-md border border-border px-3 py-1 text-xs text-fg-dim hover:border-accent hover:text-accent disabled:opacity-45"
           onClick={() => onScaleChange(clampScale(scale + SCALE_STEP))}
           disabled={scale >= MAX_SCALE}
         >
@@ -212,17 +212,28 @@ export default function PdfPane({
         </button>
       </div>
 
-      {renderError && <div className="error reader-inline-error">{renderError}</div>}
+      {renderError && (
+        <div className="mx-3 my-2 rounded-lg border border-danger px-3 py-2 text-[12.5px] text-danger">
+          {renderError}
+        </div>
+      )}
 
       <div
-        className="pdf-scroll"
+        className="flex flex-1 items-start justify-center overflow-auto bg-[#0b0d12] p-4"
         onMouseUp={handleSelection}
         onKeyUp={handleSelection}
       >
-        <div className="pdf-page" ref={pageRef}>
-          <canvas ref={canvasRef} />
+        <div
+          className="relative flex-none bg-white shadow-[0_6px_24px_rgba(0,0,0,0.45)]"
+          ref={pageRef}
+        >
+          <canvas className="block" ref={canvasRef} />
           <div className="textLayer" ref={textLayerRef} />
-          {rendering && <div className="pdf-rendering">渲染中…</div>}
+          {rendering && (
+            <div className="absolute inset-0 grid place-items-center bg-white/70 text-xs text-[#444]">
+              渲染中…
+            </div>
+          )}
         </div>
       </div>
     </div>

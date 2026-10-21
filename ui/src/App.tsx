@@ -336,11 +336,15 @@ export default function App() {
   const renderCard = (paper: Paper) => (
     <button
       key={paper.id}
-      className={`card ${selected?.id === paper.id ? 'card--active' : ''}`}
+      className={`mb-1.5 block w-full rounded-[10px] border px-3.5 py-3 text-left text-inherit transition-colors hover:bg-bg-hover ${
+        selected?.id === paper.id
+          ? 'border-accent bg-bg-hover'
+          : 'border-transparent'
+      }`}
       onClick={() => void open(paper)}
     >
-      <h3>{paper.title}</h3>
-      <p className="meta">
+      <h3 className="mb-1 text-sm font-semibold leading-snug">{paper.title}</h3>
+      <p className="m-0 text-xs text-fg-dim">
         {paper.authors.slice(0, 3).join(', ')}
         {paper.authors.length > 3 && ' 等'}
         {' · '}
@@ -348,11 +352,16 @@ export default function App() {
         {' · '}
         {paper.source}
       </p>
-      <p className="abstract">{paper.abstract_text}</p>
+      <p className="mt-1.5 line-clamp-2 text-[12.5px] leading-relaxed text-fg-dim">
+        {paper.abstract_text}
+      </p>
       {paper.categories.length > 0 && (
-        <div className="card-tags">
+        <div className="mt-2 flex flex-wrap gap-1.5">
           {paper.categories.slice(0, 3).map((category) => (
-            <span key={category} className="tag">
+            <span
+              key={category}
+              className="rounded-full border border-border px-[7px] py-px text-[10.5px] text-fg-dim"
+            >
               {category}
             </span>
           ))}
@@ -362,76 +371,94 @@ export default function App() {
   );
 
   return (
-    <div className="app">
-      <header className="topbar">
-        <span className="brand">PaperFlow</span>
-        <div className="topbar-right">
-          <span className={`conn conn--${conn}`}>{connMsg || '检查中…'}</span>
+    <div className="flex h-full flex-col">
+      <header className="flex items-center justify-between gap-3 border-b border-border bg-bg-raised px-4 py-2.5 [-webkit-app-region:drag]">
+        <span className="font-semibold tracking-[0.2px]">PaperFlow</span>
+        <div className="flex items-center gap-3 [-webkit-app-region:no-drag]">
+          <span
+            className={`text-xs ${
+              conn === 'ok'
+                ? 'text-ok'
+                : conn === 'error'
+                  ? 'text-danger'
+                  : 'text-fg-dim'
+            }`}
+          >
+            {connMsg || '检查中…'}
+          </span>
           <button
-            className="provider-chip"
+            className="max-w-40 truncate rounded-full border border-border px-2.5 py-1 text-[11.5px] text-fg-dim hover:border-accent hover:text-accent"
             onClick={() => setSettingsOpen(true)}
             title="当前模型服务"
           >
             {activeProviderName || '未配置模型'}
           </button>
-          <button className="settings-btn" onClick={() => setSettingsOpen(true)}>
+          <button
+            className="rounded-md border border-border px-3 py-1 text-xs text-fg-dim hover:bg-bg-hover hover:text-fg"
+            onClick={() => setSettingsOpen(true)}
+          >
             设置
           </button>
         </div>
       </header>
 
-      <div className="workspace">
-        <aside className="sidebar">
-          <nav className="sidebar-nav">
+      <div className="flex min-h-0 flex-1">
+        <aside className="flex w-50 flex-none flex-col gap-3 overflow-y-auto border-r border-border bg-bg-raised px-2.5 py-3 max-[960px]:w-44">
+          <nav className="flex flex-col gap-0.5">
             <button
-              className={`sidebar-item ${
-                view === 'feed' ? 'sidebar-item--active' : ''
+              className={`flex w-full items-center gap-2 overflow-hidden rounded-lg border px-2.5 py-2 text-left text-[13px] transition-colors ${
+                view === 'feed'
+                  ? 'border-accent bg-bg-hover font-medium text-fg'
+                  : 'border-transparent text-fg-dim hover:bg-bg-hover hover:text-fg'
               }`}
               onClick={() => setView('feed')}
             >
-              <span className="sidebar-icon">▤</span>
+              <span className="w-4 text-center opacity-80">▤</span>
               推荐
             </button>
             <button
-              className={`sidebar-item ${
-                view === 'search' ? 'sidebar-item--active' : ''
+              className={`flex w-full items-center gap-2 overflow-hidden rounded-lg border px-2.5 py-2 text-left text-[13px] transition-colors ${
+                view === 'search'
+                  ? 'border-accent bg-bg-hover font-medium text-fg'
+                  : 'border-transparent text-fg-dim hover:bg-bg-hover hover:text-fg'
               }`}
               onClick={() => setView('search')}
             >
-              <span className="sidebar-icon">⌕</span>
+              <span className="w-4 text-center opacity-80">⌕</span>
               搜索
             </button>
           </nav>
 
-          <div className="sidebar-section">
-            <div className="sidebar-section-title">兴趣</div>
+          <div className="flex flex-col gap-0.5">
+            <div className="px-2.5 pb-1.5 pt-1 text-[11px] uppercase tracking-[0.6px] text-fg-dim">
+              兴趣
+            </div>
             <button
-              className={`sidebar-item ${
+              className={`flex w-full items-center gap-2 overflow-hidden rounded-lg border px-2.5 py-2 text-left text-[13px] transition-colors ${
                 view === 'feed' && selectedInterest === null
-                  ? 'sidebar-item--active'
-                  : ''
+                  ? 'border-accent bg-bg-hover font-medium text-fg'
+                  : 'border-transparent text-fg-dim hover:bg-bg-hover hover:text-fg'
               }`}
               onClick={() => {
                 setView('feed');
                 setSelectedInterest(null);
               }}
             >
-              <span className="sidebar-icon">✦</span>
+              <span className="w-4 text-center opacity-80">✦</span>
               全部兴趣
-              <span className="sidebar-count">{interests.length}</span>
+              <span className="ml-auto text-[11px] text-fg-dim">
+                {interests.length}
+              </span>
             </button>
 
             {interests.map((interest) => (
-              <div
-                key={interest}
-                className={`interest-row ${
-                  view === 'feed' && selectedInterest === interest
-                    ? 'interest-row--active'
-                    : ''
-                }`}
-              >
+              <div key={interest} className="group flex items-center gap-0.5">
                 <button
-                  className="interest-name"
+                  className={`min-w-0 flex-1 truncate rounded-lg border px-2.5 py-2 text-left text-[12.5px] ${
+                    view === 'feed' && selectedInterest === interest
+                      ? 'border-transparent bg-bg-hover text-accent'
+                      : 'border-transparent text-fg-dim hover:bg-bg-hover hover:text-fg'
+                  }`}
                   onClick={() => {
                     setView('feed');
                     setSelectedInterest(interest);
@@ -441,7 +468,7 @@ export default function App() {
                   {interest}
                 </button>
                 <button
-                  className="interest-remove"
+                  className="h-[22px] w-[22px] flex-none rounded-md text-[13px] text-fg-dim opacity-0 transition-opacity hover:bg-[rgba(255,122,122,0.12)] hover:text-danger focus-visible:opacity-100 group-hover:opacity-100"
                   onClick={() => removeInterest(interest)}
                   aria-label={`删除兴趣 ${interest}`}
                 >
@@ -451,13 +478,14 @@ export default function App() {
             ))}
 
             <form
-              className="interest-add"
+              className="mt-1.5 flex gap-1"
               onSubmit={(e) => {
                 e.preventDefault();
                 addInterest();
               }}
             >
               <input
+                className="min-w-0 flex-1 rounded-md border border-border bg-bg px-2 py-1.5 text-xs text-fg outline-none focus:border-accent"
                 value={interestDraft}
                 onChange={(e) => setInterestDraft(e.target.value)}
                 placeholder="添加英文兴趣…"
@@ -466,28 +494,35 @@ export default function App() {
               />
               <button
                 type="submit"
+                className="w-7 flex-none rounded-md border border-border text-fg-dim hover:border-accent hover:text-accent disabled:opacity-40"
                 disabled={!interestDraft.trim() || interests.length >= MAX_INTERESTS}
               >
                 ＋
               </button>
             </form>
             {interests.length >= MAX_INTERESTS && (
-              <p className="sidebar-hint">最多 {MAX_INTERESTS} 个兴趣</p>
+              <p className="mx-2.5 mt-0.5 text-[11px] text-fg-dim">
+                最多 {MAX_INTERESTS} 个兴趣
+              </p>
             )}
           </div>
 
-          <div className="sidebar-footer">
-            <button className="sidebar-item" onClick={() => setSettingsOpen(true)}>
-              <span className="sidebar-icon">⚙</span>
+          <div className="mt-auto border-t border-border pt-2">
+            <button
+              className="flex w-full items-center gap-2 overflow-hidden rounded-lg border border-transparent px-2.5 py-2 text-left text-[13px] text-fg-dim hover:bg-bg-hover hover:text-fg"
+              onClick={() => setSettingsOpen(true)}
+            >
+              <span className="w-4 text-center opacity-80">⚙</span>
               设置
             </button>
           </div>
         </aside>
 
-        <div className="main">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {view === 'search' ? (
-            <div className="searchbar">
+            <div className="flex gap-2 border-b border-border px-4 py-3">
               <input
+                className="flex-1 rounded-lg border border-border bg-bg-raised px-3 py-2 text-fg outline-none focus:border-accent"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={(e) => {
@@ -497,6 +532,7 @@ export default function App() {
                 spellCheck={false}
               />
               <button
+                className="rounded-lg border border-accent bg-accent px-4 py-2 font-medium text-white disabled:opacity-45"
                 onClick={() => void runSearch()}
                 disabled={searchBusy || !query.trim()}
               >
@@ -504,17 +540,19 @@ export default function App() {
               </button>
             </div>
           ) : (
-            <header className="feed-header">
+            <header className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
               <div>
-                <h2>{selectedInterest ?? '全部兴趣'}</h2>
-                <p className="meta">
+                <h2 className="m-0 text-base">
+                  {selectedInterest ?? '全部兴趣'}
+                </h2>
+                <p className="m-0 mt-0.5 text-xs text-fg-dim">
                   {activeInterests.length === 0
                     ? '先在左侧添加兴趣'
                     : `按最新发表排序 · ${activeInterests.length} 个兴趣`}
                 </p>
               </div>
               <button
-                className="ghost-btn"
+                className="rounded-md border border-border px-3 py-1 text-xs text-fg-dim hover:border-accent hover:text-accent disabled:opacity-45"
                 onClick={() => void fetchFeedPage(activeInterests, 0, true)}
                 disabled={feedLoading || activeInterests.length === 0}
               >
@@ -526,37 +564,44 @@ export default function App() {
           {view === 'search' &&
             effectiveQuery &&
             effectiveQuery !== query.trim() && (
-              <p className="search-hint">
-                已按英文关键词搜索：<strong>{effectiveQuery}</strong>
+              <p className="mx-4 mt-2 text-xs text-fg-dim">
+                已按英文关键词搜索：
+                <strong className="font-medium text-accent">{effectiveQuery}</strong>
               </p>
             )}
           {view === 'search' &&
             effectiveQuery &&
             effectiveQuery === query.trim() &&
             containsCjk(effectiveQuery) && (
-              <p className="search-hint">
+              <p className="mx-4 mt-2 text-xs text-fg-dim">
                 未配置 LLM，已按中文原文检索，结果可能较少。
               </p>
             )}
 
-          {error && <div className="error">{error}</div>}
+          {error && (
+            <div className="mx-4 mb-2 rounded-lg border border-danger px-3.5 py-2.5 text-[13px] text-danger">
+              {error}
+            </div>
+          )}
 
-          <main className="panes">
-            <section className="list">
+          <main className="grid min-h-0 flex-1 grid-cols-[minmax(280px,40%)_1fr] max-[960px]:grid-cols-[minmax(260px,46%)_1fr]">
+            <section className="overflow-y-auto border-r border-border p-2">
               {view === 'search' ? (
                 <>
                   {papers.length === 0 && !searchBusy && (
-                    <p className="empty">还没有结果。输入关键词回车。</p>
+                    <p className="px-4 py-6 text-[13px] text-fg-dim">
+                      还没有结果。输入关键词回车。
+                    </p>
                   )}
                   {papers.map(renderCard)}
                 </>
               ) : (
                 <>
                   {feedError && (
-                    <div className="feed-error">
+                    <div className="mx-2 mb-2 flex items-center justify-between gap-2 rounded-lg border border-danger px-3 py-2 text-[12.5px] text-danger">
                       <span>{feedError}</span>
                       <button
-                        className="ghost-btn"
+                        className="rounded-md border border-danger px-3 py-1 text-xs text-danger hover:bg-[rgba(255,122,122,0.12)]"
                         onClick={() =>
                           void fetchFeedPage(
                             activeInterests,
@@ -571,82 +616,110 @@ export default function App() {
                   )}
 
                   {feedPapers.length === 0 && !feedLoading && !feedError && (
-                    <p className="empty">
+                    <p className="px-4 py-6 text-[13px] text-fg-dim">
                       {activeInterests.length === 0
                         ? '还没有兴趣。在左侧添加一个主题。'
                         : '最近没有匹配的论文。'}
                     </p>
                   )}
                   {feedPapers.length === 0 && feedLoading && (
-                    <p className="empty">正在加载推荐…</p>
+                    <p className="px-4 py-6 text-[13px] text-fg-dim">
+                      正在加载推荐…
+                    </p>
                   )}
 
                   {feedPapers.map(renderCard)}
 
-                  <div ref={feedSentinelRef} className="feed-sentinel" />
+                  <div ref={feedSentinelRef} className="h-px" />
 
                   {feedLoading && feedPapers.length > 0 && (
-                    <p className="empty">加载更多…</p>
+                    <p className="px-4 py-6 text-[13px] text-fg-dim">
+                      加载更多…
+                    </p>
                   )}
                   {!feedLoading && feedHasMore && feedPapers.length > 0 && (
-                    <button className="load-more" onClick={loadMore}>
+                    <button
+                      className="my-2 block w-[calc(100%-16px)] rounded-lg border border-dashed border-border p-2 text-fg-dim hover:border-accent hover:text-accent"
+                      onClick={loadMore}
+                    >
                       加载更多
                     </button>
                   )}
                   {!feedHasMore && feedPapers.length > 0 && (
-                    <p className="feed-end">没有更多了</p>
+                    <p className="p-3 text-center text-xs text-fg-dim">
+                      没有更多了
+                    </p>
                   )}
                 </>
               )}
             </section>
 
-            <section className="detail">
-              {!selected && <p className="empty">选一篇论文查看分析。</p>}
+            <section className="overflow-y-auto px-6 py-5 max-[960px]:p-4">
+              {!selected && (
+                <p className="px-4 py-6 text-[13px] text-fg-dim">
+                  选一篇论文查看分析。
+                </p>
+              )}
               {selected && (
                 <>
-                  <h2>{selected.title}</h2>
-                  <p className="meta">
+                  <h2 className="mb-1.5 text-xl leading-snug">
+                    {selected.title}
+                  </h2>
+                  <p className="m-0 text-xs text-fg-dim">
                     {selected.authors.join(', ')}
                     {selected.venue && ` · ${selected.venue}`}
                     {` · 来源 ${selected.source}`}
                   </p>
-                  <div className="tags">
+                  <div className="mt-2.5 flex flex-wrap gap-1.5">
                     {selected.categories.map((c) => (
-                      <span key={c} className="tag">
+                      <span
+                        key={c}
+                        className="rounded-full border border-border px-2 py-0.5 text-[11.5px] text-fg-dim"
+                      >
                         {c}
                       </span>
                     ))}
                   </div>
 
                   <button
-                    className="read-btn"
+                    className="mt-3 rounded-lg border border-accent bg-accent px-[18px] py-2 text-white disabled:opacity-45"
                     onClick={() => setReaderOpen(true)}
                     disabled={!selected.pdf_url}
                   >
                     开始阅读
                   </button>
                   {!selected.pdf_url && (
-                    <p className="meta">该论文没有可用的 PDF 链接。</p>
+                    <p className="m-0 text-xs text-fg-dim">
+                      该论文没有可用的 PDF 链接。
+                    </p>
                   )}
 
-                  <h4>摘要</h4>
-                  <p className="body">{selected.abstract_text}</p>
+                  <h4 className="mb-2 mt-5 text-xs font-semibold uppercase tracking-[0.6px] text-fg-dim">
+                    摘要
+                  </h4>
+                  <p className="mb-2.5 whitespace-pre-wrap">
+                    {selected.abstract_text}
+                  </p>
 
-                  <h4>LLM 分析</h4>
+                  <h4 className="mb-2 mt-5 text-xs font-semibold uppercase tracking-[0.6px] text-fg-dim">
+                    LLM 分析
+                  </h4>
                   {summaryBusy && !summaryStream && (
-                    <p className="empty">分析中…</p>
+                    <p className="px-4 py-6 text-[13px] text-fg-dim">
+                      分析中…
+                    </p>
                   )}
                   {summaryBusy && summaryStream && (
-                    <p className="body summary-stream">{summaryStream}</p>
+                    <p className="mb-2.5 whitespace-pre-wrap">{summaryStream}</p>
                   )}
                   {!summaryBusy && !summary && summaryStream && (
-                    <p className="body summary-stream">{summaryStream}</p>
+                    <p className="mb-2.5 whitespace-pre-wrap">{summaryStream}</p>
                   )}
                   {summaryError && (
-                    <div className="summary-error">
+                    <div className="my-2 flex items-center justify-between gap-2.5 rounded-lg border border-danger px-3 py-2 text-[12.5px] text-danger">
                       <span>{summaryError}</span>
                       <button
-                        className="ghost-btn"
+                        className="rounded-md border border-border px-3 py-1 text-xs text-fg-dim hover:border-accent hover:text-accent"
                         onClick={() => void open(selected)}
                       >
                         重试
@@ -655,14 +728,20 @@ export default function App() {
                   )}
                   {summary && (
                     <>
-                      <p className="body">{summary.short}</p>
-                      <p className="body">{summary.detailed}</p>
-                      <ul className="points">
+                      <p className="mb-2.5 whitespace-pre-wrap">
+                        {summary.short}
+                      </p>
+                      <p className="mb-2.5 whitespace-pre-wrap">
+                        {summary.detailed}
+                      </p>
+                      <ul className="m-0 pl-5">
                         {summary.key_points.map((k, i) => (
-                          <li key={i}>{k}</li>
+                          <li key={i} className="mb-1">
+                            {k}
+                          </li>
                         ))}
                       </ul>
-                      <p className="meta">
+                      <p className="m-0 text-xs text-fg-dim">
                         模型 {summary.model} · prompt {summary.prompt_version}
                       </p>
                     </>

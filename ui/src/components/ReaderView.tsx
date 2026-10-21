@@ -162,29 +162,42 @@ export default function ReaderView({
   );
 
   return (
-    <div className="reader" role="dialog" aria-modal="true" aria-label="论文阅读器">
-      <header className="reader-header">
-        <span className="reader-title">{paper.title}</span>
+    <div
+      className="fixed inset-0 z-20 flex flex-col bg-bg"
+      role="dialog"
+      aria-modal="true"
+      aria-label="论文阅读器"
+    >
+      <header className="flex items-center gap-3 border-b border-border bg-bg-raised px-4 py-2.5">
+        <span className="min-w-0 flex-1 truncate font-semibold">
+          {paper.title}
+        </span>
         {status === 'ready' && (
-          <span className="meta">
+          <span className="text-xs text-fg-dim">
             第 {page} / {numPages} 页
           </span>
         )}
-        <button className="icon-btn" onClick={onClose} aria-label="关闭阅读器">
+        <button
+          className="rounded-md px-2 py-1 text-base text-fg-dim hover:bg-bg-hover hover:text-fg"
+          onClick={onClose}
+          aria-label="关闭阅读器"
+        >
           ✕
         </button>
       </header>
 
-      <div className="reader-main">
-        <section className="reader-pdf-area">
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(340px,420px)] max-[900px]:grid-cols-[minmax(0,1fr)_340px]">
+        <section className="flex min-h-0 min-w-0 flex-col border-r border-border">
           {status === 'loading' && (
-            <p className="empty">正在下载并解析 PDF…</p>
+            <p className="px-4 py-6 text-[13px] text-fg-dim">
+              正在下载并解析 PDF…
+            </p>
           )}
           {status === 'error' && (
-            <div className="reader-error">
+            <div className="m-5 rounded-lg border border-danger px-4 py-3.5 text-[13px] text-danger">
               <p>{loadError}</p>
               <button
-                className="ghost-btn"
+                className="rounded-md border border-border px-3 py-1 text-xs text-fg-dim hover:border-accent hover:text-accent"
                 onClick={() => setReloadToken((token) => token + 1)}
               >
                 重试
