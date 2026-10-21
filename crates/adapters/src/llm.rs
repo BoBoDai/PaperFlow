@@ -94,7 +94,9 @@ impl ProviderProfileId {
             },
             Self::MiniMax => EffectiveCapabilities {
                 json_mode: false,
-                max_tokens_field: MaxTokensField::MaxTokens,
+                // MiniMax documents max_completion_tokens as the preferred
+                // field; max_tokens is deprecated.
+                max_tokens_field: MaxTokensField::MaxCompletionTokens,
                 // Omit thinking by default: M3.1 requires adaptive thinking
                 // and rejects `disabled`, while M2.x works with the default.
                 thinking_mode: ThinkingMode::Default,
@@ -745,7 +747,7 @@ impl LlmProvider for OpenAiCompatibleClient {
         ];
 
         let content = self
-            .chat(&config, messages, 1200, Duration::from_secs(90))
+            .chat(&config, messages, 4096, Duration::from_secs(120))
             .await?;
 
         parse_summary(&content, config.model.trim())
@@ -761,7 +763,7 @@ impl LlmProvider for OpenAiCompatibleClient {
         ];
 
         let content = self
-            .chat(&config, messages, 120, Duration::from_secs(25))
+            .chat(&config, messages, 512, Duration::from_secs(45))
             .await?;
 
         parse_keywords(&content)
@@ -876,6 +878,8 @@ struct ChatResponse {
 #[derive(Debug, Deserialize)]
 struct ChatChoice {
     message: ChatMessage,
+    #[serde(default)]
+    finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -888,14 +892,36 @@ fn parse_chat_content(body: &str) -> Result<String> {
     let response: ChatResponse = serde_json::from_str(body)
         .map_err(|e| Error::InvalidLlmOutput(format!("invalid chat completion response: {e}")))?;
 
-    response
-        .choices
-        .into_iter()
-        .next()
+    let choice = response.choices.into_iter().next();
+    let finish_reason = choice
+        .as_ref()
+        .and_then(|choice| choice.finish_reason.clone());
+
+    let content = choice
         .and_then(|choice| choice.message.content)
         .map(|content| strip_think_block(&content).to_string())
-        .filter(|content| !content.is_empty())
-        .ok_or_else(|| Error::InvalidLlmOutput("LLM returned an empty response".into()))
+        .filter(|content| !content.is_empty());
+
+    match content {
+        Some(content) => Ok(content),
+        None => {
+            tracing::warn!(
+                finish_reason = ?finish_reason,
+                body = %truncate(body, 500),
+                "LLM returned empty content"
+            );
+
+            let detail = if finish_reason.as_deref() == Some("length") {
+                "（输出被 token 上限截断，请调大 max tokens 或降低 thinking）"
+            } else {
+                ""
+            };
+
+            Err(Error::InvalidLlmOutput(format!(
+                "LLM returned an empty response{detail}"
+            )))
+        }
+    }
 }
 
 fn strip_think_block(content: &str) -> &str {
@@ -1063,6 +1089,8 @@ mod tests {
         let minimax = build_chat_body(&config(ProviderProfileId::MiniMax), vec![], 10);
         assert!(minimax.get("response_format").is_none());
         assert!(minimax.get("thinking").is_none());
+        assert_eq!(minimax["max_completion_tokens"].as_u64(), Some(10));
+        assert!(minimax.get("max_tokens").is_none());
 
         let mut minimax_disabled = config(ProviderProfileId::MiniMax);
         minimax_disabled.compat.thinking_mode = Some(ThinkingMode::Disabled);
@@ -1207,6 +1235,18 @@ mod tests {
         assert!(matches!(
             parse_chat_content(body),
             Err(Error::InvalidLlmOutput(_))
+        ));
+    }
+
+    #[test]
+    fn reports_truncated_empty_content() {
+        let body =
+            r#"{"choices":[{"message":{"content":""},"finish_reason":"length"}]}"#;
+        let error = parse_chat_content(body).expect_err("empty content must fail");
+
+        assert!(matches!(
+            error,
+            Error::InvalidLlmOutput(message) if message.contains("截断")
         ));
     }
 
