@@ -2,8 +2,11 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use chrono::Utc;
-use paperflow_adapters::{LlmProvider, PaperSearch};
-use paperflow_core::{Answer, Error, Paper, QaRequest, Result, Source, Summary};
+use paperflow_adapters::{LlmProvider, PaperSearch, ReviewProvider};
+use paperflow_core::{
+    Answer, Error, OpinionRequest, Paper, PersonaAnswer, PersonaChatRequest, PersonaId,
+    PersonaOpinion, PersonaReview, QaRequest, Result, Source, Stance, Summary,
+};
 
 use crate::App;
 
@@ -151,6 +154,15 @@ pub(super) struct FakeLlm {
     fail_answer: bool,
     answer_calls: AtomicUsize,
     last_qa: Mutex<Option<QaRequest>>,
+    review_fail: Option<PersonaId>,
+    opinion_fail: Option<PersonaId>,
+    review_stance: Stance,
+    opinion_stance: Stance,
+    review_calls: AtomicUsize,
+    chat_calls: AtomicUsize,
+    opinion_calls: AtomicUsize,
+    last_chat: Mutex<Option<PersonaChatRequest>>,
+    opinion_requests: Mutex<Vec<OpinionRequest>>,
 }
 
 impl Default for FakeLlm {
@@ -164,6 +176,15 @@ impl Default for FakeLlm {
             fail_answer: false,
             answer_calls: AtomicUsize::new(0),
             last_qa: Mutex::new(None),
+            review_fail: None,
+            opinion_fail: None,
+            review_stance: Stance::Support,
+            opinion_stance: Stance::Support,
+            review_calls: AtomicUsize::new(0),
+            chat_calls: AtomicUsize::new(0),
+            opinion_calls: AtomicUsize::new(0),
+            last_chat: Mutex::new(None),
+            opinion_requests: Mutex::new(Vec::new()),
         }
     }
 }
@@ -217,6 +238,115 @@ impl FakeLlm {
             .lock()
             .ok()
             .and_then(|request| request.as_ref().cloned())
+    }
+
+    pub(super) fn failing_review(persona: PersonaId) -> Self {
+        Self {
+            review_fail: Some(persona),
+            ..Self::default()
+        }
+    }
+
+    pub(super) fn failing_opinion(persona: PersonaId) -> Self {
+        Self {
+            opinion_fail: Some(persona),
+            ..Self::default()
+        }
+    }
+
+    pub(super) fn review_calls(&self) -> usize {
+        self.review_calls.load(Ordering::SeqCst)
+    }
+
+    pub(super) fn chat_calls(&self) -> usize {
+        self.chat_calls.load(Ordering::SeqCst)
+    }
+
+    pub(super) fn opinion_calls(&self) -> usize {
+        self.opinion_calls.load(Ordering::SeqCst)
+    }
+
+    pub(super) fn last_chat_request(&self) -> Option<PersonaChatRequest> {
+        self.last_chat
+            .lock()
+            .ok()
+            .and_then(|request| request.as_ref().cloned())
+    }
+
+    pub(super) fn recorded_opinion_requests(&self) -> Vec<OpinionRequest> {
+        self.opinion_requests
+            .lock()
+            .map(|requests| requests.clone())
+            .unwrap_or_default()
+    }
+}
+
+impl ReviewProvider for FakeLlm {
+    async fn review_persona(
+        &self,
+        _paper: &Paper,
+        persona: PersonaId,
+        _context: Option<&str>,
+    ) -> Result<PersonaReview> {
+        self.review_calls.fetch_add(1, Ordering::SeqCst);
+
+        if self.review_fail == Some(persona) {
+            return Err(Error::Llm("review failed".into()));
+        }
+
+        Ok(PersonaReview {
+            persona,
+            stance: self.review_stance,
+            confidence: 80,
+            summary: "summary".into(),
+            strengths: vec!["strength".into()],
+            concerns: vec!["concern".into()],
+            riskiest_claim: "claim".into(),
+            would_change_mind: "evidence".into(),
+            model: "fake".into(),
+        })
+    }
+
+    async fn persona_chat_stream(
+        &self,
+        request: &PersonaChatRequest,
+        on_delta: &mut (dyn FnMut(String) + Send),
+    ) -> Result<PersonaAnswer> {
+        self.chat_calls.fetch_add(1, Ordering::SeqCst);
+        if let Ok(mut last) = self.last_chat.lock() {
+            *last = Some(request.clone());
+        }
+
+        if self.fail_answer {
+            return Err(Error::Llm("chat failed".into()));
+        }
+
+        let answer = format!("{} 的回答", request.persona.label());
+        on_delta(answer.clone());
+
+        Ok(PersonaAnswer {
+            answer,
+            model: "fake".into(),
+            prompt_version: PersonaAnswer::PROMPT_VERSION.into(),
+        })
+    }
+
+    async fn persona_opinion(&self, request: &OpinionRequest) -> Result<PersonaOpinion> {
+        self.opinion_calls.fetch_add(1, Ordering::SeqCst);
+        if let Ok(mut requests) = self.opinion_requests.lock() {
+            requests.push(request.clone());
+        }
+
+        if self.opinion_fail == Some(request.persona) {
+            return Err(Error::Llm("opinion failed".into()));
+        }
+
+        Ok(PersonaOpinion {
+            persona: request.persona,
+            stance: self.opinion_stance,
+            confidence: 72,
+            reason: "理由".into(),
+        })
     }
 }
 

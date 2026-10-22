@@ -4,19 +4,26 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
-use paperflow_core::{Answer, Error, Paper, QaRequest, Result, Summary};
+use paperflow_core::{
+    Answer, Error, OpinionRequest, Paper, PersonaAnswer, PersonaChatRequest, PersonaId,
+    PersonaOpinion, PersonaReview, QaRequest, Result, Summary,
+};
 
-use super::LlmProvider;
+use super::{LlmProvider, ReviewProvider};
 use super::config::{LlmConfig, normalize_base_url};
 use super::error::{
     ConnectionTestResult, LlmEndpointError, LlmErrorKind, LlmModelList, map_http_error,
     request_id_from_headers, transport_error,
 };
 use super::parsing::{
-    parse_answer, parse_chat_content, parse_keywords, parse_models_response, parse_summary_text,
+    parse_answer, parse_chat_content, parse_keywords, parse_models_response, parse_persona_answer,
+    parse_persona_opinion, parse_persona_review, parse_summary_text,
 };
 use super::profiles::{ThinkingFormat, ThinkingMode};
-use super::prompts::{KEYWORDS_SYSTEM_PROMPT, build_qa_messages, summary_messages};
+use super::prompts::{
+    KEYWORDS_SYSTEM_PROMPT, build_qa_messages, persona_chat_messages, persona_opinion_messages,
+    persona_review_messages, summary_messages,
+};
 use super::streaming::{AnswerStream, StreamChunk, next_sse_event};
 
 pub struct OpenAiCompatibleClient {
@@ -48,6 +55,7 @@ impl OpenAiCompatibleClient {
         max_tokens: u32,
         timeout: Duration,
         json_mode: bool,
+        temperature: f64,
     ) -> Result<String> {
         if !config.is_configured() {
             return Err(Error::Config("请先在设置中填写 API key".into()));
@@ -58,7 +66,14 @@ impl OpenAiCompatibleClient {
             return Err(Error::Config("LLM 模型名不能为空".into()));
         }
 
-        let body = build_chat_body(config, messages, max_tokens, json_mode, false);
+        let body = build_chat_body(
+            config,
+            messages,
+            max_tokens,
+            json_mode,
+            false,
+            temperature,
+        );
 
         let response = self
             .http
@@ -149,7 +164,7 @@ impl OpenAiCompatibleClient {
             "role": "user",
             "content": "ping",
         })];
-        let body = build_chat_body(config, messages, 16, false, false);
+        let body = build_chat_body(config, messages, 16, false, false, 0.2);
 
         let started = Instant::now();
         let response = self
@@ -188,6 +203,7 @@ impl OpenAiCompatibleClient {
         max_tokens: u32,
         timeout: Duration,
         on_delta: &mut (dyn FnMut(String) + Send),
+        temperature: f64,
     ) -> Result<String> {
         if !config.is_configured() {
             return Err(Error::Config("请先在设置中填写 API key".into()));
@@ -197,7 +213,7 @@ impl OpenAiCompatibleClient {
             return Err(Error::Config("LLM 模型名不能为空".into()));
         }
 
-        let body = build_chat_body(config, messages, max_tokens, false, true);
+        let body = build_chat_body(config, messages, max_tokens, false, true, temperature);
 
         let response = self
             .http
@@ -307,6 +323,7 @@ impl LlmProvider for OpenAiCompatibleClient {
                 4096,
                 Duration::from_secs(120),
                 false,
+                0.2,
             )
             .await?;
 
@@ -328,6 +345,7 @@ impl LlmProvider for OpenAiCompatibleClient {
                 4096,
                 Duration::from_secs(300),
                 on_delta,
+                0.2,
             )
             .await?;
 
@@ -344,7 +362,7 @@ impl LlmProvider for OpenAiCompatibleClient {
         ];
 
         let content = self
-            .chat(&config, messages, 512, Duration::from_secs(45), true)
+            .chat(&config, messages, 512, Duration::from_secs(45), true, 0.2)
             .await?;
 
         parse_keywords(&content)
@@ -361,7 +379,14 @@ impl LlmProvider for OpenAiCompatibleClient {
 
         let messages = build_qa_messages(request);
         let content = self
-            .chat(&config, messages, 4096, Duration::from_secs(180), false)
+            .chat(
+                &config,
+                messages,
+                4096,
+                Duration::from_secs(180),
+                false,
+                0.2,
+            )
             .await?;
 
         parse_answer(&content, config.model.trim())
@@ -387,10 +412,91 @@ impl LlmProvider for OpenAiCompatibleClient {
                 4096,
                 Duration::from_secs(300),
                 on_delta,
+                0.2,
             )
             .await?;
 
         parse_answer(&content, config.model.trim())
+    }
+}
+
+impl ReviewProvider for OpenAiCompatibleClient {
+    async fn review_persona(
+        &self,
+        paper: &Paper,
+        persona: PersonaId,
+        context: Option<&str>,
+    ) -> Result<PersonaReview> {
+        let config = self.current_config()?;
+        tracing::info!(
+            id = %paper.id,
+            persona = persona.as_str(),
+            model = %config.model,
+            "reviewing paper"
+        );
+
+        let content = self
+            .chat(
+                &config,
+                persona_review_messages(paper, persona, context),
+                2048,
+                Duration::from_secs(180),
+                true,
+                persona.temperature(),
+            )
+            .await?;
+
+        parse_persona_review(&content, persona, config.model.trim())
+    }
+
+    async fn persona_chat_stream(
+        &self,
+        request: &PersonaChatRequest,
+        on_delta: &mut (dyn FnMut(String) + Send),
+    ) -> Result<PersonaAnswer> {
+        let config = self.current_config()?;
+        tracing::info!(
+            id = %request.paper.id,
+            persona = request.persona.as_str(),
+            model = %config.model,
+            "streaming persona answer"
+        );
+
+        let content = self
+            .stream_chat(
+                &config,
+                persona_chat_messages(request),
+                2048,
+                Duration::from_secs(300),
+                on_delta,
+                0.6,
+            )
+            .await?;
+
+        parse_persona_answer(&content, config.model.trim())
+    }
+
+    async fn persona_opinion(&self, request: &OpinionRequest) -> Result<PersonaOpinion> {
+        let config = self.current_config()?;
+        tracing::info!(
+            id = %request.paper.id,
+            persona = request.persona.as_str(),
+            model = %config.model,
+            "collecting persona opinion"
+        );
+
+        let content = self
+            .chat(
+                &config,
+                persona_opinion_messages(request),
+                512,
+                Duration::from_secs(90),
+                true,
+                0.2,
+            )
+            .await?;
+
+        parse_persona_opinion(&content, request.persona)
     }
 }
 
@@ -400,13 +506,14 @@ pub(crate) fn build_chat_body(
     max_tokens: u32,
     json_mode: bool,
     stream: bool,
+    temperature: f64,
 ) -> serde_json::Value {
     let capabilities = config.capabilities();
 
     let mut body = serde_json::json!({
         "model": config.model.trim(),
         "messages": messages,
-        "temperature": 0.2,
+        "temperature": temperature,
         "stream": stream,
     });
 

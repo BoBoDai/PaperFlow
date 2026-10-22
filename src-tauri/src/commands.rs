@@ -12,7 +12,10 @@ use paperflow_adapters::{
     provider_catalog, ConnectionTestResult, LlmEndpointError, LlmErrorKind, LlmModelList,
     ProviderProfileInfo,
 };
-use paperflow_core::{FeedPage, Paper, QaRequest, QaResponse, SearchResponse, Summary};
+use paperflow_core::{
+    FeedPage, FinalizeRequest, OpinionBatch, Paper, PersonaAnswer, PersonaChatRequest, QaRequest,
+    QaResponse, ReviewRequest, ReviewResult, SearchResponse, Summary,
+};
 use tauri::State;
 
 type IpcResult<T> = std::result::Result<T, String>;
@@ -104,6 +107,42 @@ pub async fn ask_paper_stream(
         })
         .await
         .map_err(to_ipc)
+}
+
+/// 三脑评审：三个人格独立评审，返回结构化结果与聚合结论。
+#[tauri::command]
+pub async fn review_paper(
+    state: State<'_, AppState>,
+    request: ReviewRequest,
+) -> IpcResult<ReviewResult> {
+    state.app.review_paper(request).await.map_err(to_ipc)
+}
+
+/// 三脑群聊：某个人格的流式回答。
+#[tauri::command]
+pub async fn persona_chat_stream(
+    state: State<'_, AppState>,
+    request: PersonaChatRequest,
+    on_event: tauri::ipc::Channel<String>,
+) -> IpcResult<PersonaAnswer> {
+    let channel = on_event.clone();
+
+    state
+        .app
+        .persona_chat_stream(request, move |delta| {
+            let _ = channel.send(delta);
+        })
+        .await
+        .map_err(to_ipc)
+}
+
+/// 最终表态：三个脑独立给出意见并聚合。
+#[tauri::command]
+pub async fn finalize_opinions(
+    state: State<'_, AppState>,
+    request: FinalizeRequest,
+) -> IpcResult<OpinionBatch> {
+    state.app.finalize_opinions(request).await.map_err(to_ipc)
 }
 
 /// 下载 PDF，返回原始字节（前端收到 ArrayBuffer）

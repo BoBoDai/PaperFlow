@@ -1,6 +1,9 @@
 //! Response parsing and structural validation.
 
-use paperflow_core::{Answer, Error, Result, Summary, contains_cjk};
+use paperflow_core::{
+    Answer, Error, PersonaAnswer, PersonaId, PersonaOpinion, PersonaReview, Result, Stance,
+    Summary, contains_cjk,
+};
 use serde::Deserialize;
 
 use super::error::{LlmEndpointError, truncate};
@@ -232,6 +235,127 @@ fn first_line(text: &str) -> String {
 #[derive(Debug, Deserialize)]
 struct KeywordsPayload {
     keywords: String,
+}
+
+/// Extract the JSON payload from a model response.
+///
+/// Thinking blocks are stripped first. A single fenced block is accepted as a
+/// transport detail; anything else must be raw JSON. Missing required fields,
+/// wrong types, and unknown enum values are schema failures, not fallbacks.
+fn extract_json_payload(content: &str) -> Result<&str> {
+    let text = strip_think_block(content).trim();
+    if text.is_empty() {
+        return Err(Error::InvalidLlmOutput("JSON payload is empty".into()));
+    }
+
+    if let Some(rest) = text.strip_prefix("```") {
+        let rest = rest.strip_prefix("json").unwrap_or(rest);
+        let rest = rest.trim_start();
+        let end = rest.rfind("```").ok_or_else(|| {
+            Error::InvalidLlmOutput("JSON payload has an unterminated code fence".into())
+        })?;
+        return Ok(rest[..end].trim());
+    }
+
+    Ok(text)
+}
+
+fn required_field(name: &str, value: &str) -> Result<String> {
+    let value = value.trim().to_string();
+    if value.is_empty() {
+        return Err(Error::InvalidLlmOutput(format!("{name} is empty")));
+    }
+    Ok(value)
+}
+
+fn checked_confidence(confidence: u8) -> Result<u8> {
+    if confidence > 100 {
+        return Err(Error::InvalidLlmOutput(format!(
+            "confidence {confidence} is out of range (0-100)"
+        )));
+    }
+    Ok(confidence)
+}
+
+fn clean_bullets(items: Vec<String>) -> Vec<String> {
+    items
+        .into_iter()
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+#[derive(Debug, Deserialize)]
+struct PersonaReviewPayload {
+    stance: Stance,
+    confidence: u8,
+    summary: String,
+    #[serde(default)]
+    strengths: Vec<String>,
+    #[serde(default)]
+    concerns: Vec<String>,
+    riskiest_claim: String,
+    would_change_mind: String,
+}
+
+pub(crate) fn parse_persona_review(
+    content: &str,
+    persona: PersonaId,
+    model: &str,
+) -> Result<PersonaReview> {
+    let payload: PersonaReviewPayload =
+        serde_json::from_str(extract_json_payload(content)?).map_err(|e| {
+            Error::InvalidLlmOutput(format!("review JSON does not match the schema: {e}"))
+        })?;
+
+    Ok(PersonaReview {
+        persona,
+        stance: payload.stance,
+        confidence: checked_confidence(payload.confidence)?,
+        summary: required_field("summary", &payload.summary)?,
+        strengths: clean_bullets(payload.strengths),
+        concerns: clean_bullets(payload.concerns),
+        riskiest_claim: required_field("riskiest_claim", &payload.riskiest_claim)?,
+        would_change_mind: required_field("would_change_mind", &payload.would_change_mind)?,
+        model: model.to_string(),
+    })
+}
+
+pub(crate) fn parse_persona_answer(content: &str, model: &str) -> Result<PersonaAnswer> {
+    let answer = strip_think_block(content).trim().to_string();
+    if answer.is_empty() {
+        return Err(Error::InvalidLlmOutput("persona answer is empty".into()));
+    }
+
+    Ok(PersonaAnswer {
+        answer,
+        model: model.to_string(),
+        prompt_version: PersonaAnswer::PROMPT_VERSION.into(),
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct PersonaOpinionPayload {
+    stance: Stance,
+    confidence: u8,
+    reason: String,
+}
+
+pub(crate) fn parse_persona_opinion(
+    content: &str,
+    persona: PersonaId,
+) -> Result<PersonaOpinion> {
+    let payload: PersonaOpinionPayload =
+        serde_json::from_str(extract_json_payload(content)?).map_err(|e| {
+            Error::InvalidLlmOutput(format!("opinion JSON does not match the schema: {e}"))
+        })?;
+
+    Ok(PersonaOpinion {
+        persona,
+        stance: payload.stance,
+        confidence: checked_confidence(payload.confidence)?,
+        reason: required_field("reason", &payload.reason)?,
+    })
 }
 
 pub(crate) fn parse_keywords(content: &str) -> Result<String> {

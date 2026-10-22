@@ -178,3 +178,103 @@ export interface QaResponse {
   context_truncated: boolean;
   context_chars: number;
 }
+
+export type PersonaId = 'rigor' | 'repro' | 'insight';
+export type Stance = 'support' | 'borderline' | 'oppose';
+export type ReviewContext = 'abstract' | 'full_text';
+
+/** 对应 `paperflow_core::PersonaReview` */
+export interface PersonaReview {
+  persona: PersonaId;
+  stance: Stance;
+  /** 0-100 */
+  confidence: number;
+  summary: string;
+  strengths: string[];
+  concerns: string[];
+  riskiest_claim: string;
+  would_change_mind: string;
+  model: string;
+}
+
+/** 对应 `paperflow_core::PersonaOutcome`（serde 内部标签 `status`） */
+export type PersonaOutcome =
+  | { status: 'ok'; review: PersonaReview }
+  | { status: 'failed'; persona: PersonaId; message: string };
+
+/** 对应 `paperflow_core::ReviewVerdict`（serde 内部标签 `kind`） */
+export type ReviewVerdict =
+  | { kind: 'consensus'; stance: Stance }
+  | { kind: 'majority'; stance: Stance }
+  | { kind: 'split' }
+  | { kind: 'incomplete' };
+
+/** 对应 `paperflow_core::ReviewResult` */
+export interface ReviewResult {
+  paper_id: string;
+  outcomes: PersonaOutcome[];
+  verdict: ReviewVerdict;
+  context: ReviewContext;
+  model: string;
+  prompt_version: string;
+}
+
+/** 对应 `paperflow_core::ReviewRequest` */
+export interface ReviewRequest {
+  paper: Paper;
+  context?: string | null;
+}
+
+/** 对应 `paperflow_core::MagiTurn`；persona 为 null 表示用户发言 */
+export interface MagiTurn {
+  persona: PersonaId | null;
+  content: string;
+}
+
+/** 对应 `paperflow_core::PersonaChatRequest` */
+export interface PersonaChatRequest {
+  paper: Paper;
+  persona: PersonaId;
+  question: string;
+  context: string;
+  transcript: MagiTurn[];
+  own_review?: PersonaReview | null;
+  panel_reviews?: PersonaReview[];
+}
+
+/** 对应 `paperflow_core::PersonaAnswer` */
+export interface PersonaAnswer {
+  answer: string;
+  model: string;
+  prompt_version: string;
+}
+
+/** 对应 `paperflow_core::PersonaOpinion` */
+export interface PersonaOpinion {
+  persona: PersonaId;
+  stance: Stance;
+  confidence: number;
+  reason: string;
+}
+
+/** 对应 `paperflow_core::OpinionOutcome` */
+export type OpinionOutcome =
+  | { status: 'ok'; opinion: PersonaOpinion }
+  | { status: 'failed'; persona: PersonaId; message: string };
+
+export type FinalVerdict = ReviewVerdict;
+
+/** 对应 `paperflow_core::OpinionBatch` */
+export interface OpinionBatch {
+  outcomes: OpinionOutcome[];
+  verdict: FinalVerdict;
+}
+
+/** 对应 `paperflow_core::FinalizeRequest` */
+export interface FinalizeRequest {
+  paper: Paper;
+  question: string;
+  transcript: MagiTurn[];
+  context: string;
+  reviews: PersonaReview[];
+}

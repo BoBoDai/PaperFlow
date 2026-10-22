@@ -188,6 +188,7 @@ SSE 处理：
 - `SettingsPanel.tsx`：多服务商列表、编辑、模型拉取、连接测试、高级兼容性。
 - `ReaderView.tsx`：下载 PDF、持有 document、页码 / 缩放 / 选区、AI 面板。
 - `PdfPane.tsx`：canvas + text layer；`AiPanel.tsx`：分析 / 问答 tab、选区解释、流式气泡。
+- `ReviewView.tsx`：三脑评审全屏页（MAGI 终端风）、三列评审、群聊、最终表决。
 - `api/ipc.ts`：唯一调用 `invoke` 的地方；组件不直接 import `@tauri-apps/api`。
 - `types.ts`：手写 Rust 类型镜像；Rust 字段改动必须同步。
 - `styles.css`：Tailwind v4 入口，只有 `@theme` token、base 和 PDF.js `textLayer`。
@@ -199,10 +200,45 @@ SSE 处理：
 | 领域纯逻辑 | `crates/core/src/*.rs` | 单元测试 |
 | arXiv / OpenAlex / PDF / LLM | `crates/adapters/src/*/tests.rs` | 单元测试；部分 `#[ignore]` 在线测试 |
 | 搜索 / 信息流 / 问答 / 去重 | `crates/usecases/src/tests/` | `FakeSearch` + `FakeLlm` 单测；3 个在线测试 |
+| 三脑评审 / 群聊 / 表决 | `crates/usecases/src/tests/{review,magi}.rs` | 聚合规则、失败槽位、预算、隔离性 |
 | 设置 / 凭据 | `src-tauri/src/settings/tests.rs`、`credentials.rs` | 临时目录单测 |
 | 前端 | 无单测 | `pnpm typecheck` + `pnpm build` + 手动冒烟 |
 
-## 12. 当前边界
+## 12. 三脑评审与群聊（实验性）
+
+入口在论文详情面板「开始阅读」旁，全屏 `ReviewView` overlay；没有导航项。
+
+### 初始评审
+
+- `App::review_paper`（`crates/usecases/src/review.rs`）用 `tokio::join!` 并行调用三个人格：
+  - `Rigor`（严谨）：方法、统计、claim 与实验是否匹配。
+  - `Repro`（复现）：数据 / 代码、超参、算力、评估协议。
+  - `Insight`（洞见）：新颖性、与已有工作的差异、实际价值。
+- 每条走 `ReviewProvider::review_persona`，严格 JSON 解析（`parse_persona_review`）；缺字段、越界 confidence、非 JSON 一律 `InvalidLlmOutput`。
+- 失败槽位保留为 `PersonaOutcome::Failed { persona, message }`，不丢弃；有失败时 verdict 为 `Incomplete`。
+- 聚合规则（纯函数 `aggregate_review`）：任一失败 → `Incomplete`；3:0 非 borderline → `Consensus`；2:1 非 borderline → `Majority`；其余（含全 borderline）→ `Split`。
+- 仅摘要时 confidence 上限 `MAGI_ABSTRACT_CONFIDENCE_CAP = 70`，并在 UI 标注 `CONFIDENCE ≤ 70`。
+
+### 群聊
+
+- 前端维护一份共享 `transcript`，按 `Rigor → Repro → Insight` 顺序串行调用 `persona_chat_stream`；后发言者能看到前面的发言。
+- 每次请求带 `own_review`（自己的初评）和 `panel_reviews`（另外两人的初评），prompt 层过滤掉自己，避免重复注入。
+- transcript 预算 `MAGI_TRANSCRIPT_BUDGET = 12000` 字符，按整轮从旧到新裁剪；问题预算 2000 字符，上下文复用 `QA_CONTEXT_BUDGET = 40000`（头 3/4 + 尾 1/4）。
+- 流式仍走 `Channel<String>`；三个脑各用一次独立 command，前端按列渲染，不做多路复用。
+
+### 最终表决
+
+- 「形成结论」调用一次 `finalize_opinions`；后端 `tokio::join!` 三个 `persona_opinion`，每个只收到共享 transcript + 自己的初评 + 另外两人的**初评**，不收彼此的表态。
+- 返回 `OpinionBatch { outcomes, verdict }`；失败槽位同样带 `persona`，聚合规则与初评共用。
+- 这是对群聊趋同的保险：讨论可以互相影响，最终判断必须独立。
+
+### 材料与视觉
+
+- 默认标题 + 摘要；「加载全文重评」复用 `download_pdf` + PDF.js `extractFullText`，再带 `context` 重跑评审。
+- 页面为深色等宽终端：三列 1px 网格、UNIT 01/02/03、状态灯、票型条、`magi-scanlines` 扫描线；不使用 EVA logo 或 MAGI 原名作为产品文案。
+- `ReviewResult::PROMPT_VERSION` / `PersonaAnswer::PROMPT_VERSION` 当前为 `v1`；改 prompt 必须 bump。
+
+## 13. 当前边界
 
 - `PaperStore` 只有 trait，没有 SQLite 实现；摘要缓存键已定义。
 - 后台调度 / 系统通知未实现。

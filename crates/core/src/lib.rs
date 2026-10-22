@@ -14,11 +14,17 @@
 pub mod error;
 pub mod paper;
 pub mod qa;
+pub mod review;
 pub mod summary;
 
 pub use error::{Error, Result};
 pub use paper::{FeedPage, Paper, SearchResponse, Source};
 pub use qa::{Answer, QaRequest, QaResponse, QaRole, QaScope, QaTurn};
+pub use review::{
+    FinalVerdict, FinalizeRequest, MagiTurn, OpinionBatch, OpinionOutcome, OpinionRequest,
+    PersonaAnswer, PersonaChatRequest, PersonaId, PersonaOpinion, PersonaOutcome, PersonaReview,
+    ReviewContext, ReviewRequest, ReviewResult, ReviewVerdict, Stance,
+};
 pub use summary::Summary;
 
 /// True for Han characters in the CJK ranges we translate.

@@ -72,6 +72,9 @@ pub fn run() {
             commands::test_llm_connection,
             commands::ask_paper,
             commands::ask_paper_stream,
+            commands::review_paper,
+            commands::persona_chat_stream,
+            commands::finalize_opinions,
             commands::download_pdf,
         ])
         .run(tauri::generate_context!())

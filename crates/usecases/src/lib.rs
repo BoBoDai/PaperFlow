@@ -15,8 +15,11 @@
 //! async fn search(Query(q): Query<Q>) -> Json<...> { app.search_papers(q.q, n).await }
 //! ```
 
+mod budget;
 mod feed;
+mod magi;
 mod qa;
+mod review;
 mod search;
 
 #[cfg(test)]
@@ -38,6 +41,13 @@ pub const QA_SELECTION_BUDGET: usize = 8_000;
 pub const QA_QUESTION_BUDGET: usize = 2_000;
 pub const QA_HISTORY_TURNS: usize = 6;
 pub const QA_HISTORY_BUDGET: usize = 12_000;
+
+/// Character budget for the shared three-brain group-chat transcript.
+pub const MAGI_TRANSCRIPT_BUDGET: usize = 12_000;
+/// Mirrors the Q&A question budget.
+pub const MAGI_QUESTION_BUDGET: usize = 2_000;
+/// Abstract-only reviews may not claim more certainty than this.
+pub const MAGI_ABSTRACT_CONFIDENCE_CAP: u8 = 70;
 
 /// 应用上下文：所有适配器在这里注入。
 ///

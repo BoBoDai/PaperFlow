@@ -8,6 +8,7 @@ import {
   searchPapers,
   summarizePaperStream,
 } from './api/ipc';
+import ReviewView from './components/ReviewView';
 import ReaderView from './components/ReaderView';
 import SettingsPanel from './components/SettingsPanel';
 import type { LlmSettingsView, Paper, Summary } from './types';
@@ -117,6 +118,7 @@ export default function App() {
   const [summaryStream, setSummaryStream] = useState('');
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [readerOpen, setReaderOpen] = useState(false);
+  const [reviewPaper, setReviewPaper] = useState<Paper | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [feedPapers, setFeedPapers] = useState<Paper[]>([]);
@@ -229,6 +231,7 @@ export default function App() {
     setSummaryStream('');
     setSummaryError(null);
     setReaderOpen(false);
+    setReviewPaper(null);
 
     void fetchFeedPage(activeInterests, 0, true);
   }, [view, feedKey, activeInterests, fetchFeedPage]);
@@ -297,6 +300,7 @@ export default function App() {
     setSummaryStream('');
     setSummaryError(null);
     setReaderOpen(false);
+    setReviewPaper(null);
     setEffectiveQuery(null);
     try {
       const response = await searchPapers(q, 10);
@@ -318,6 +322,7 @@ export default function App() {
     setSummaryBusy(true);
     setSummaryError(null);
     setReaderOpen(false);
+    setReviewPaper(null);
 
     try {
       const result = await summarizePaperStream(paper, (delta) => {
@@ -681,13 +686,27 @@ export default function App() {
                     ))}
                   </div>
 
-                  <button
-                    className="mt-3 rounded-lg border border-accent bg-accent px-[18px] py-2 text-white disabled:opacity-45"
-                    onClick={() => setReaderOpen(true)}
-                    disabled={!selected.pdf_url}
-                  >
-                    开始阅读
-                  </button>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      className="rounded-lg border border-accent bg-accent px-[18px] py-2 text-white disabled:opacity-45"
+                      onClick={() => {
+                        setReviewPaper(null);
+                        setReaderOpen(true);
+                      }}
+                      disabled={!selected.pdf_url}
+                    >
+                      开始阅读
+                    </button>
+                    <button
+                      className="rounded-lg border border-border px-[18px] py-2 text-fg-dim hover:border-accent hover:text-accent"
+                      onClick={() => {
+                        setReaderOpen(false);
+                        setReviewPaper(selected);
+                      }}
+                    >
+                      三脑评审
+                    </button>
+                  </div>
                   {!selected.pdf_url && (
                     <p className="m-0 text-xs text-fg-dim">
                       该论文没有可用的 PDF 链接。
@@ -774,6 +793,14 @@ export default function App() {
           summaryError={summaryError}
           onRetrySummary={() => void open(selected)}
           onClose={() => setReaderOpen(false)}
+        />
+      )}
+
+      {reviewPaper && (
+        <ReviewView
+          key={reviewPaper.id}
+          paper={reviewPaper}
+          onClose={() => setReviewPaper(null)}
         />
       )}
     </div>

@@ -1,5 +1,5 @@
 use super::*;
-use paperflow_core::{Error, QaRole, QaScope, QaTurn};
+use paperflow_core::{Error, PersonaId, QaRole, QaScope, QaTurn, Stance};
 
 fn config(provider: ProviderProfileId) -> LlmConfig {
     let defaults = provider.defaults();
@@ -51,16 +51,31 @@ fn build_body_uses_profile_capabilities() {
         10,
         true,
         false,
+        0.2,
     );
     assert_eq!(deepseek["response_format"]["type"], "json_object");
     assert_eq!(deepseek["max_tokens"].as_u64(), Some(10));
     assert!(deepseek.get("max_completion_tokens").is_none());
 
-    let openai = build_chat_body(&config(ProviderProfileId::OpenAi), vec![], 10, true, false);
+    let openai = build_chat_body(
+        &config(ProviderProfileId::OpenAi),
+        vec![],
+        10,
+        true,
+        false,
+        0.2,
+    );
     assert_eq!(openai["max_completion_tokens"].as_u64(), Some(10));
     assert!(openai.get("max_tokens").is_none());
 
-    let minimax = build_chat_body(&config(ProviderProfileId::MiniMax), vec![], 10, true, false);
+    let minimax = build_chat_body(
+        &config(ProviderProfileId::MiniMax),
+        vec![],
+        10,
+        true,
+        false,
+        0.2,
+    );
     assert!(minimax.get("response_format").is_none());
     assert!(minimax.get("thinking").is_none());
     assert_eq!(minimax["max_completion_tokens"].as_u64(), Some(10));
@@ -68,7 +83,7 @@ fn build_body_uses_profile_capabilities() {
 
     let mut minimax_disabled = config(ProviderProfileId::MiniMax);
     minimax_disabled.compat.thinking_mode = Some(ThinkingMode::Disabled);
-    let body = build_chat_body(&minimax_disabled, vec![], 10, true, false);
+    let body = build_chat_body(&minimax_disabled, vec![], 10, true, false, 0.2);
     assert_eq!(body["thinking"]["type"], "disabled");
 }
 
@@ -82,7 +97,7 @@ fn compat_overrides_take_precedence() {
         thinking_format: Some(ThinkingFormat::EnableThinking),
     };
 
-    let body = build_chat_body(&config, vec![], 10, true, false);
+    let body = build_chat_body(&config, vec![], 10, true, false, 0.2);
     assert!(body.get("response_format").is_none());
     assert_eq!(body["max_completion_tokens"].as_u64(), Some(10));
     assert_eq!(body["enable_thinking"].as_bool(), Some(false));
@@ -96,7 +111,7 @@ fn adaptive_thinking_is_sent_when_requested() {
         ..LlmCompat::default()
     };
 
-    let body = build_chat_body(&config, vec![], 10, true, false);
+    let body = build_chat_body(&config, vec![], 10, true, false, 0.2);
     assert_eq!(body["thinking"]["type"], "adaptive");
 }
 
@@ -331,4 +346,68 @@ fn rejects_unclosed_think_block() {
 
     assert_eq!(stream.push("<think>reasoning"), "");
     assert_eq!(stream.finish(), "");
+}
+
+#[test]
+fn parses_persona_review_and_strips_fence() {
+    let content = r#"```json
+{"stance":"oppose","confidence":82,"summary":"评估不足","strengths":["问题重要","方法简洁"],"concerns":["样本太小"],"riskiest_claim":"可泛化","would_change_mind":"更大规模基准"}
+```"#;
+
+    let review = parse_persona_review(content, PersonaId::Rigor, "deepseek-chat")
+        .expect("review should parse");
+
+    assert_eq!(review.persona, PersonaId::Rigor);
+    assert_eq!(review.stance, Stance::Oppose);
+    assert_eq!(review.confidence, 82);
+    assert_eq!(review.concerns, vec!["样本太小"]);
+    assert_eq!(review.model, "deepseek-chat");
+}
+
+#[test]
+fn rejects_review_confidence_out_of_range() {
+    let content = r#"{"stance":"support","confidence":140,"summary":"ok","strengths":[],"concerns":[],"riskiest_claim":"x","would_change_mind":"y"}"#;
+
+    assert!(matches!(
+        parse_persona_review(content, PersonaId::Repro, "m"),
+        Err(Error::InvalidLlmOutput(_))
+    ));
+}
+
+#[test]
+fn rejects_review_with_missing_fields() {
+    let content = r#"{"stance":"support","confidence":50,"summary":"ok"}"#;
+
+    assert!(matches!(
+        parse_persona_review(content, PersonaId::Insight, "m"),
+        Err(Error::InvalidLlmOutput(_))
+    ));
+}
+
+#[test]
+fn rejects_review_that_is_not_json() {
+    assert!(matches!(
+        parse_persona_review("我觉得还行", PersonaId::Rigor, "m"),
+        Err(Error::InvalidLlmOutput(_))
+    ));
+}
+
+#[test]
+fn parses_persona_opinion() {
+    let content = r#"{"stance":"borderline","confidence":64,"reason":"证据不足"}"#;
+
+    let opinion = parse_persona_opinion(content, PersonaId::Insight).expect("opinion should parse");
+
+    assert_eq!(opinion.persona, PersonaId::Insight);
+    assert_eq!(opinion.stance, Stance::Borderline);
+    assert_eq!(opinion.confidence, 64);
+    assert_eq!(opinion.reason, "证据不足");
+}
+
+#[test]
+fn rejects_empty_persona_answer() {
+    assert!(matches!(
+        parse_persona_answer("   ", "m"),
+        Err(Error::InvalidLlmOutput(_))
+    ));
 }

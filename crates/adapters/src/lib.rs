@@ -22,7 +22,7 @@ pub use llm::{
     base_url_host, normalize_base_url, provider_catalog, ConnectionTestResult,
     EffectiveCapabilities, LlmCompat, LlmConfig, LlmEndpointError, LlmErrorKind, LlmModelList,
     LlmProvider, MaxTokensField, OpenAiCompatibleClient, ProviderProfileId,
-    ProviderProfileInfo, ThinkingFormat, ThinkingMode,
+    ProviderProfileInfo, ReviewProvider, ThinkingFormat, ThinkingMode,
 };
 pub use openalex::OpenAlexHttpClient;
 pub use search::PaperSearch;

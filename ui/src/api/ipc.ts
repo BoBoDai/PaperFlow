@@ -9,14 +9,20 @@ import { Channel, invoke } from '@tauri-apps/api/core';
 import type {
   ConnectionTestResult,
   FeedPage,
+  FinalizeRequest,
   LlmModelList,
   LlmProbeInput,
   LlmSettingsInput,
   LlmSettingsView,
+  OpinionBatch,
   Paper,
+  PersonaAnswer,
+  PersonaChatRequest,
   ProviderProfileInfo,
   QaRequest,
   QaResponse,
+  ReviewRequest,
+  ReviewResult,
   SearchResponse,
   Summary,
 } from '../types';
@@ -100,6 +106,31 @@ export async function askPaperStream(
   channel.onmessage = onDelta;
 
   return invoke<QaResponse>('ask_paper_stream', { request, onEvent: channel });
+}
+
+export async function reviewPaper(
+  request: ReviewRequest,
+): Promise<ReviewResult> {
+  return invoke<ReviewResult>('review_paper', { request });
+}
+
+export async function personaChatStream(
+  request: PersonaChatRequest,
+  onDelta: (delta: string) => void,
+): Promise<PersonaAnswer> {
+  const channel = new Channel<string>();
+  channel.onmessage = onDelta;
+
+  return invoke<PersonaAnswer>('persona_chat_stream', {
+    request,
+    onEvent: channel,
+  });
+}
+
+export async function finalizeOpinions(
+  request: FinalizeRequest,
+): Promise<OpinionBatch> {
+  return invoke<OpinionBatch>('finalize_opinions', { request });
 }
 
 const pdfRequests = new Map<string, Promise<ArrayBuffer>>();

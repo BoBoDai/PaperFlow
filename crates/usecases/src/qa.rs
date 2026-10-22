@@ -3,6 +3,7 @@
 use paperflow_adapters::{LlmProvider, PaperSearch};
 use paperflow_core::{Error, QaRequest, QaResponse, QaRole, QaScope, QaTurn, Result};
 
+use super::budget::{char_count, truncate_context};
 use super::{
     App, QA_CONTEXT_BUDGET, QA_HISTORY_BUDGET, QA_HISTORY_TURNS, QA_QUESTION_BUDGET,
     QA_SELECTION_BUDGET,
@@ -49,10 +50,6 @@ impl<A: PaperSearch, L: LlmProvider, O: PaperSearch> App<A, L, O> {
     }
 }
 
-fn char_count(text: &str) -> usize {
-    text.chars().count()
-}
-
 fn prepare_qa(mut request: QaRequest) -> Result<(QaRequest, bool, usize)> {
     let question = request.question.trim().to_string();
     if question.is_empty() {
@@ -78,25 +75,7 @@ fn prepare_qa(mut request: QaRequest) -> Result<(QaRequest, bool, usize)> {
     };
 
     let (context, truncated) =
-        if request.scope == QaScope::FullPaper && char_count(&context) > budget {
-            let head: String = context.chars().take(budget * 3 / 4).collect();
-            let tail: String = context
-                .chars()
-                .rev()
-                .take(budget / 4)
-                .collect::<String>()
-                .chars()
-                .rev()
-                .collect();
-            (
-                format!("{head}\n\n[…上下文过长，中间内容已省略…]\n\n{tail}"),
-                true,
-            )
-        } else if char_count(&context) > budget {
-            (context.chars().take(budget).collect(), true)
-        } else {
-            (context, false)
-        };
+        truncate_context(&context, budget, request.scope == QaScope::FullPaper);
 
     let context_chars = char_count(&context);
     request.context = context;

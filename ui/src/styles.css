@@ -13,6 +13,18 @@
   --color-accent: #6ea8fe;
   --color-danger: #ff7a7a;
   --color-ok: #5fd38d;
+
+  /* Terminal palette for the three-brain review page. These intentionally do
+     not flip in light mode: the page is a deliberate dark MAGI console. */
+  --color-term-bg: #0b0d11;
+  --color-term-fg: #d8dbe2;
+  --color-term-dim: #7d8798;
+  --color-term-amber: #d9a441;
+  --color-term-cyan: #58c7d8;
+  --color-term-red: #e05252;
+  --color-term-grid: #232a33;
+
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 @media (prefers-color-scheme: light) {
@@ -122,4 +134,19 @@
   50% {
     opacity: 0;
   }
+}
+
+/*
+ * Subtle CRT scanlines for the MAGI console. Kept below 5% opacity so text
+ * contrast is unaffected; purely decorative and pointer-events-none.
+ */
+.magi-scanlines {
+  background-image: repeating-linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.05) 0,
+    rgba(255, 255, 255, 0.05) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  opacity: 0.35;
 }

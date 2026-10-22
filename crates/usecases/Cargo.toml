@@ -11,6 +11,7 @@ repository.workspace = true
 paperflow-core = { workspace = true }
 paperflow-adapters = { workspace = true }
 
+tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
