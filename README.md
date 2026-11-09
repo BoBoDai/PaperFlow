@@ -1,13 +1,31 @@
 # PaperFlow
 
-学术论文检索与分析桌面应用。
+学术论文检索与分析桌面应用：arXiv / OpenAlex 检索、兴趣信息流、中文查询转英文关键词、LLM 摘要、内置 PDF 阅读器与 AI 问答。
 
-- 自然语言搜索 arXiv / OpenAlex
-- 兴趣频道推荐流：按兴趣浏览最新论文，类似论文版信息流
-- 中文查询由 LLM 自动转英文关键词
-- LLM 分析论文的核心贡献与关键要点
-- 内置 PDF 阅读器 + AI 阅读助手（选区解释 / 当前页 / 全文问答）
-- 后台定时监控新论文
+![PaperFlow 推荐信息流](docs/screenshots/feed.png)
+
+## 功能
+
+- **检索**：自然语言搜索 arXiv / OpenAlex；中文查询由 LLM 转英文关键词，结果上方显示实际使用的查询
+- **兴趣信息流**：按兴趣浏览最新论文，支持「全部兴趣」合并频道与单个兴趣
+- **LLM 分析**：流式生成中文摘要（一句话 / 详细分析 / 要点）
+- **PDF 阅读器**：Rust 下载并缓存 PDF，支持翻页、页码跳转、缩放
+- **AI 阅读助手**：选区解释、当前页 / 全文问答，流式输出；AI 面板可左右拖动调整宽度
+- **选中翻译**：选中 PDF 文本一键翻译成中文，译文独立卡片、可复制、会话内缓存
+- **圆桌评审**：三个人格（严谨性 / 可复现性 / 洞察力）独立评审并聚合结论，支持群聊追问与终局表态
+- **多服务商 LLM**：任意 OpenAI 兼容端点，多套配置一键切换，API Key 只写不读
+- **学术源直连**：代理出口被限流时，可让 arXiv / OpenAlex 绕过系统代理
+
+## 下载安装（macOS）
+
+从 [Releases](https://github.com/BoBoDai/PaperFlow/releases) 下载最新 `.dmg`，拖入「应用程序」。
+
+当前构建为 ad-hoc 签名、未公证，首次打开需要：
+
+- 右键 `PaperFlow.app` → 「打开」，或
+- `xattr -dr com.apple.quarantine /Applications/PaperFlow.app`
+
+首次启动后打开「设置」，配置任意 OpenAI 兼容服务商（DeepSeek / OpenAI / MiniMax / 自定义）即可使用 LLM 功能。
 
 ## 架构
 
@@ -26,7 +44,7 @@
 └──────────────────┬──────────────────────────┘
 ┌──────────────────▼──────────────────────────┐
 │  crates/core/       纯逻辑，零 IO            │  可纯单测
-│  crates/adapters/   外部世界                 │  arXiv / OpenAlex / LLM / 存储
+│  crates/adapters/   外部世界                 │  arXiv / OpenAlex / LLM / PDF
 └─────────────────────────────────────────────┘
 ```
 
@@ -49,12 +67,12 @@
 
 ```
 crates/
-  core/         领域模型 + 纯逻辑（Paper、Summary、错误类型）
-  adapters/     arXiv / LLM / 存储的 trait 与实现
+  core/         领域模型 + 纯逻辑（Paper、Summary、Review、错误类型）
+  adapters/     arXiv / OpenAlex / LLM / PDF 的 trait 与实现
   usecases/     编排层，传输无关
 src-tauri/      Tauri 应用（main.rs 只做入口，commands.rs 是 IPC）
 ui/             React + Vite 前端
-docs/           技术文档
+docs/           技术文档与截图
 ```
 
 ## 开发
@@ -84,9 +102,10 @@ pnpm dev              # 只起 Vite，浏览器开 localhost:5173
 ### 检查
 
 ```bash
-cargo test            # Rust 单测（core / usecases 的纯逻辑）
-cargo clippy          # lint
-pnpm typecheck        # 前端类型检查
+cargo test --workspace     # 全部 Rust 单测
+cargo clippy --workspace --all-targets -- -D warnings
+pnpm typecheck             # 前端类型检查
+pnpm build                 # typecheck + vite build
 ```
 
 ## 推荐与兴趣
@@ -107,48 +126,52 @@ pnpm typecheck        # 前端类型检查
 
 - PDF 由 Rust 下载并缓存（HTTPS、公网地址、32MB 上限、`%PDF-` 校验），避开 WebView CORS
 - 支持翻页、页码跳转、缩放
-- 选中 PDF 文本 → 「解释选中内容」
+- 选中 PDF 文本 → 「解释选中内容」或「翻译」
 - 问答支持「当前页」和「全文」两种上下文；全文超过约 4 万字符时取开头 + 结尾，并提示已截断
-- 问答为流式输出：Rust 解析 SSE，通过 Tauri Channel 逐字推送到 AI 面板
+- 问答与翻译均为流式输出：Rust 解析 SSE，通过 Tauri Channel 逐字推送
 - 多轮追问保留最近 6 轮，回答为简体中文
+- AI 面板与 PDF 之间的分栏线可拖动，宽度会记住
 - 扫描版 PDF、出版商登录页/订阅页等无法直接阅读时会给出明确错误
 
 PDF.js 的 worker、cmaps 和 standard fonts 在构建时复制到 `ui/dist/`。
 
+## 圆桌评审
+
+详情页点「圆桌评审」，三个人格各自独立评审同一篇论文：
+
+- 严谨性（RIGOR）、可复现性（REPRO）、洞察力（INSIGHT）
+- 每个人格给出立场、置信度、优点、疑虑、最脆弱的声明、何种证据能改变判断
+- 聚合为共识 / 多数 / 分歧 / 不完整；仅凭摘要评审时置信度上限 70
+- 可继续「问评审团」群聊，最后收集终局表态
+- 有 PDF 时可「加载全文重评」
+
 ## LLM 配置
 
-右上角「设置」是一个多服务商管理面板，可配置多个任意 OpenAI 兼容端点：
+右上角「设置」分为「模型服务」和「网络」两个页面：
 
-- 左侧列表管理服务商，右侧编辑名称 / Base URL / API Key / 模型
-- 预设：DeepSeek（`https://api.deepseek.com` / `deepseek-chat`）、
-  OpenAI（`https://api.openai.com/v1` / `gpt-4o-mini`）、
-  MiniMax（国内 `https://api.minimaxi.com/v1` / `MiniMax-M2`；
-  国际版可改为 `https://api.minimax.io/v1`）
-- 「设为当前」决定中文查询翻译和论文分析使用哪个服务商
+- **模型服务**：左侧管理多个 OpenAI 兼容服务商，右侧按「服务商 / 连接 / 模型 / 高级兼容性」分组编辑
+- 预设：DeepSeek、OpenAI、MiniMax、自定义
+- 「设为当前」决定中文查询翻译、论文分析、问答与圆桌评审使用哪个服务商
 - 保存后立即生效，无需重启
+- **网络**：可让 arXiv / OpenAlex 绕过系统代理直连；模型请求与 PDF 下载仍走代理
 
 配置保存在系统应用配置目录的 `settings.json`（macOS 为
 `~/Library/Application Support/com.paperflow.desktop/`，Unix 权限 0600），
-不会进入仓库，也不会写入日志；旧版单服务商配置会自动迁移。
-
-- 英文查询直接检索 arXiv / OpenAlex
-- 中文查询由当前服务商翻译成英文关键词；未配置 key 时直接按中文原文检索
-- 搜索后结果上方会显示实际使用的英文关键词
-- 论文分析（右侧「LLM 分析」）使用当前服务商
+API Key 单独保存在 `credentials.json`，不会进入仓库，也不会写入日志；旧版配置会自动迁移。
 
 ## 当前状态
 
-骨架已通：**`pnpm app:dev` 开窗、`pnpm app:build` 出安装包、IPC 链路贯通。**
+已实现：
 
-尚未实现（下一步）：
+- [x] 真实 arXiv / OpenAlex 客户端（限流与空结果自动回退）
+- [x] 多服务商 LLM（流式摘要 / 问答 / 翻译 / 圆桌评审）
+- [x] 兴趣推荐流
+- [x] 内置 PDF 阅读器 + AI 辅助阅读
+- [x] 学术源直连开关
 
-- [x] `adapters/arxiv.rs` —— 真实 arXiv Atom API 客户端（HTTP + XML 解析）
-- [x] `adapters/openalex.rs` —— OpenAlex 回退源，arXiv 限流或无结果时自动接管
-- [x] `adapters/llm/` —— DeepSeek 客户端（OpenAI 兼容）+ 多服务商设置页
-- [x] 兴趣推荐流 —— 侧边栏 + 兴趣频道（按最新发表排序，arXiv/OpenAlex 回退）
-- [x] 内置 PDF 阅读器 + AI 辅助阅读（选区解释 / 当前页 / 全文问答）
+尚未实现：
+
 - [ ] `adapters/storage.rs` —— 只有 trait，没有 SQLite 实现
 - [ ] 后台调度器（定时抓取 + 通知）
 - [ ] `ui/src/types.ts` 是手写的 Rust 类型镜像，应该用 ts-rs 生成
-- [x] 前端样式方案 —— Tailwind CSS v4 utility-first（shadcn/ui 暂未引入）
-- [ ] 三平台各自验证一次 WebView 渲染差异
+- [ ] Windows / Linux 各自验证一次 WebView 渲染差异
