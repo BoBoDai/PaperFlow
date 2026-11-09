@@ -116,8 +116,31 @@ impl SettingsManager {
         view(&settings, &credentials)
     }
 
+    /// Whether academic sources bypass the system proxy.
+    pub fn academic_direct(&self) -> bool {
+        self.settings
+            .read()
+            .map(|settings| settings.academic_direct)
+            .unwrap_or(false)
+    }
+
+    /// Persist the network mode. Callers also update the live HTTP clients.
+    pub fn set_academic_direct(&self, direct: bool) -> Result<(), String> {
+        let mut settings = self.current();
+        settings.academic_direct = direct;
+
+        persist_settings(&self.settings_path, &settings)?;
+
+        if let Ok(mut current) = self.settings.write() {
+            *current = settings;
+        }
+
+        Ok(())
+    }
+
     /// Validate, persist credentials and settings, then publish the new state.
     pub fn save(&self, input: &LlmSettingsInput) -> Result<LlmSettingsView, String> {
+        let academic_direct = self.academic_direct();
         let settings = LlmSettings {
             schema_version: SETTINGS_SCHEMA_VERSION,
             providers: input
@@ -133,6 +156,7 @@ impl SettingsManager {
                 })
                 .collect(),
             active_id: input.active_id.clone(),
+            academic_direct,
         };
 
         let settings = normalize_settings(settings, NormalizeMode::Save)?;
@@ -219,6 +243,7 @@ fn view(settings: &LlmSettings, credentials: &CredentialStore) -> LlmSettingsVie
     LlmSettingsView {
         schema_version: settings.schema_version,
         active_id: settings.active_id.clone(),
+        academic_direct: settings.academic_direct,
         providers: settings
             .providers
             .iter()

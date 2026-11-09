@@ -84,6 +84,11 @@ export async function getLlmProviderCatalog(): Promise<ProviderProfileInfo[]> {
   return invoke<ProviderProfileInfo[]>('get_llm_provider_catalog');
 }
 
+/** Route arXiv/OpenAlex around the system proxy. Persisted in settings.json. */
+export async function setAcademicDirect(direct: boolean): Promise<void> {
+  return invoke<void>('set_academic_direct', { direct });
+}
+
 export async function fetchLlmModels(
   input: LlmProbeInput,
 ): Promise<LlmModelList> {

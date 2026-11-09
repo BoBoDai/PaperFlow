@@ -8,6 +8,7 @@
 //! [`Error::Parse`] rather than an empty result — the same
 //! no-silent-degradation rule that applies to LLM output.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
@@ -28,7 +29,9 @@ const MIN_REQUEST_INTERVAL: Duration = Duration::from_secs(3);
 
 /// HTTP-backed client for the arXiv Atom API.
 pub struct ArxivHttpClient {
-    http: reqwest::Client,
+    proxied: reqwest::Client,
+    direct: reqwest::Client,
+    direct_mode: AtomicBool,
     endpoint: String,
     last_request: Mutex<Option<Instant>>,
 }
@@ -40,19 +43,42 @@ impl ArxivHttpClient {
 
     /// Build a client against a custom endpoint. Useful for tests or mirrors.
     pub fn with_endpoint(endpoint: impl Into<String>) -> Result<Self> {
-        let http = reqwest::Client::builder()
-            .user_agent(concat!("PaperFlow/", env!("CARGO_PKG_VERSION")))
-            // arXiv normally answers in under a second. Keep this short so a
-            // dead route does not delay the OpenAlex fallback.
-            .timeout(Duration::from_secs(10))
+        let build = || {
+            reqwest::Client::builder()
+                .user_agent(concat!("PaperFlow/", env!("CARGO_PKG_VERSION")))
+                // arXiv normally answers in under a second. Keep this short so
+                // a dead route does not delay the OpenAlex fallback.
+                .timeout(Duration::from_secs(10))
+        };
+
+        let proxied = build()
+            .build()
+            .map_err(|e| Error::Network(format!("failed to build HTTP client: {e}")))?;
+        let direct = build()
+            .no_proxy()
             .build()
             .map_err(|e| Error::Network(format!("failed to build HTTP client: {e}")))?;
 
         Ok(Self {
-            http,
+            proxied,
+            direct,
+            direct_mode: AtomicBool::new(false),
             endpoint: endpoint.into(),
             last_request: Mutex::new(None),
         })
+    }
+
+    /// Route requests straight to arXiv instead of the system/env proxy.
+    pub fn set_direct(&self, direct: bool) {
+        self.direct_mode.store(direct, Ordering::Relaxed);
+    }
+
+    fn http(&self) -> &reqwest::Client {
+        if self.direct_mode.load(Ordering::Relaxed) {
+            &self.direct
+        } else {
+            &self.proxied
+        }
     }
 
     /// Space requests out; arXiv returns HTTP 429 if clients call it faster
@@ -124,7 +150,7 @@ impl ArxivHttpClient {
         self.throttle().await;
 
         let response = self
-            .http
+            .http()
             .get(&self.endpoint)
             .query(&params)
             .send()

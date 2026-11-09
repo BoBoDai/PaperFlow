@@ -88,6 +88,7 @@ export interface LlmSettingsView {
   schema_version: number;
   providers: LlmProviderView[];
   active_id: string;
+  academic_direct: boolean;
 }
 
 /** 对应 `src-tauri::settings::LlmProviderInput` */

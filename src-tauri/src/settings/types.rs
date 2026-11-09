@@ -26,6 +26,10 @@ pub struct LlmSettings {
     pub providers: Vec<LlmProviderConfig>,
     #[serde(default)]
     pub active_id: String,
+    /// Route arXiv/OpenAlex around the system proxy. Persisted here so the
+    /// clients start in the right mode before the UI loads.
+    #[serde(default)]
+    pub academic_direct: bool,
 }
 
 impl Default for LlmSettings {
@@ -35,6 +39,7 @@ impl Default for LlmSettings {
             schema_version: SETTINGS_SCHEMA_VERSION,
             active_id: provider.id.clone(),
             providers: vec![provider],
+            academic_direct: false,
         }
     }
 }
@@ -93,6 +98,7 @@ pub struct LlmSettingsView {
     pub schema_version: u32,
     pub providers: Vec<LlmProviderView>,
     pub active_id: String,
+    pub academic_direct: bool,
 }
 
 #[derive(Clone, Deserialize)]

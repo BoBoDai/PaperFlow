@@ -22,6 +22,8 @@ pub(crate) struct RawSettings {
     base_url: Option<String>,
     #[serde(default)]
     model: Option<String>,
+    #[serde(default)]
+    academic_direct: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -108,6 +110,7 @@ pub(crate) fn migrate_raw(raw: RawSettings) -> (LlmSettings, BTreeMap<String, St
             schema_version: SETTINGS_SCHEMA_VERSION,
             providers,
             active_id,
+            academic_direct: raw.academic_direct.unwrap_or(false),
         };
 
         (settings, keys, should_persist)
@@ -147,6 +150,7 @@ pub(crate) fn migrate_raw(raw: RawSettings) -> (LlmSettings, BTreeMap<String, St
                 compat: LlmCompat::default(),
             }],
             active_id: id,
+            academic_direct: raw.academic_direct.unwrap_or(false),
         };
 
         (settings, keys, true)

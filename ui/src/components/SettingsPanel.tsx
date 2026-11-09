@@ -5,6 +5,7 @@ import {
   getLlmProviderCatalog,
   getLlmSettings,
   saveLlmSettings,
+  setAcademicDirect,
   testLlmConnection,
 } from '../api/ipc';
 import { formatLlmError, ipcErrorMessage } from '../lib/ipcError';
@@ -81,6 +82,8 @@ export default function SettingsPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [networkBusy, setNetworkBusy] = useState(false);
+  const [networkError, setNetworkError] = useState<string | null>(null);
 
   const modelRequests = useRef<Record<string, number>>({});
   const probeRequests = useRef<Record<string, number>>({});
@@ -117,6 +120,24 @@ export default function SettingsPanel({
       cancelled = true;
     };
   }, [open]);
+
+  const updateAcademicDirect = async (direct: boolean) => {
+    if (networkBusy) return;
+
+    setNetworkBusy(true);
+    setNetworkError(null);
+
+    try {
+      await setAcademicDirect(direct);
+      setSettings((current) =>
+        current ? { ...current, academic_direct: direct } : current,
+      );
+    } catch (networkFailure: unknown) {
+      setNetworkError(ipcErrorMessage(networkFailure));
+    } finally {
+      setNetworkBusy(false);
+    }
+  };
 
   const selected =
     settings?.providers.find((provider) => provider.id === selectedId) ?? null;
@@ -774,6 +795,31 @@ export default function SettingsPanel({
             )}
           </section>
         </div>
+
+        <section className="border-t border-border px-[22px] py-3">
+          <label className="flex items-center justify-between gap-4">
+            <span className="min-w-0">
+              <span className="block text-[13px] text-fg">学术源直连</span>
+              <span className="mt-0.5 block text-[11px] text-fg-dim">
+                arXiv / OpenAlex 绕过系统代理直连；模型请求与 PDF 下载仍走代理。代理出口被限流时开启。
+              </span>
+            </span>
+            <select
+              className={`${selectClass} w-[130px] flex-none`}
+              value={settings?.academic_direct ? 'direct' : 'system'}
+              onChange={(event) =>
+                void updateAcademicDirect(event.target.value === 'direct')
+              }
+              disabled={!settings || networkBusy}
+            >
+              <option value="system">跟随系统代理</option>
+              <option value="direct">直连</option>
+            </select>
+          </label>
+          {networkError && (
+            <p className="mt-1.5 text-[11px] text-danger">{networkError}</p>
+          )}
+        </section>
 
         <footer className="flex items-center justify-between gap-3 border-t border-border px-[22px] py-3">
           <span className="text-xs text-fg-dim">

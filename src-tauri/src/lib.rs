@@ -30,12 +30,14 @@ pub fn run() {
 
     tauri::Builder::default()
         .setup(|app| {
+            let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+            let settings = SettingsManager::load(config_dir);
+
             // 适配器的装配点。
             let arxiv = ArxivHttpClient::new().map_err(|e| e.to_string())?;
             let openalex = OpenAlexHttpClient::new().map_err(|e| e.to_string())?;
-
-            let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-            let settings = SettingsManager::load(config_dir);
+            arxiv.set_direct(settings.academic_direct());
+            openalex.set_direct(settings.academic_direct());
 
             let pdf_cache_dir = app
                 .path()
@@ -64,6 +66,7 @@ pub fn run() {
             commands::get_llm_provider_catalog,
             commands::fetch_llm_models,
             commands::test_llm_connection,
+            commands::set_academic_direct,
             commands::ask_paper,
             commands::ask_paper_stream,
             commands::translate_text,

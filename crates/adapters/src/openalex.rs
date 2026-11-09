@@ -8,6 +8,7 @@
 //! reconstructed here.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, NaiveDate, Utc};
@@ -31,7 +32,9 @@ const SELECT_FIELDS: &str = "id,title,display_name,publication_date,publication_
 
 /// HTTP-backed client for the OpenAlex Works API.
 pub struct OpenAlexHttpClient {
-    http: reqwest::Client,
+    proxied: reqwest::Client,
+    direct: reqwest::Client,
+    direct_mode: AtomicBool,
     endpoint: String,
     last_request: Mutex<Option<Instant>>,
 }
@@ -43,17 +46,40 @@ impl OpenAlexHttpClient {
 
     /// Build a client against a custom endpoint. Useful for tests or mirrors.
     pub fn with_endpoint(endpoint: impl Into<String>) -> Result<Self> {
-        let http = reqwest::Client::builder()
-            .user_agent(concat!("PaperFlow/", env!("CARGO_PKG_VERSION")))
-            .timeout(Duration::from_secs(15))
+        let build = || {
+            reqwest::Client::builder()
+                .user_agent(concat!("PaperFlow/", env!("CARGO_PKG_VERSION")))
+                .timeout(Duration::from_secs(15))
+        };
+
+        let proxied = build()
+            .build()
+            .map_err(|e| Error::Network(format!("failed to build HTTP client: {e}")))?;
+        let direct = build()
+            .no_proxy()
             .build()
             .map_err(|e| Error::Network(format!("failed to build HTTP client: {e}")))?;
 
         Ok(Self {
-            http,
+            proxied,
+            direct,
+            direct_mode: AtomicBool::new(false),
             endpoint: endpoint.into(),
             last_request: Mutex::new(None),
         })
+    }
+
+    /// Route requests straight to OpenAlex instead of the system/env proxy.
+    pub fn set_direct(&self, direct: bool) {
+        self.direct_mode.store(direct, Ordering::Relaxed);
+    }
+
+    fn http(&self) -> &reqwest::Client {
+        if self.direct_mode.load(Ordering::Relaxed) {
+            &self.direct
+        } else {
+            &self.proxied
+        }
     }
 
     async fn throttle(&self) {
@@ -73,7 +99,7 @@ impl OpenAlexHttpClient {
         self.throttle().await;
 
         let response = self
-            .http
+            .http()
             .get(&self.endpoint)
             .query(&params)
             .send()

@@ -134,6 +134,20 @@ pub async fn translate_text_stream(
         .map_err(to_ipc)
 }
 
+/// Toggle direct connections for arXiv/OpenAlex (bypassing the system proxy).
+#[tauri::command]
+pub fn set_academic_direct(state: State<'_, AppState>, direct: bool) -> IpcResult<()> {
+    state
+        .settings
+        .set_academic_direct(direct)
+        .map_err(|error| error.to_string())?;
+
+    state.app.arxiv.set_direct(direct);
+    state.app.openalex.set_direct(direct);
+
+    Ok(())
+}
+
 /// Round-table review: three personas review independently and return
 /// structured results plus an aggregate verdict.
 #[tauri::command]
