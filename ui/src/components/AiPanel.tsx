@@ -312,7 +312,7 @@ export default function AiPanel({
   };
 
   return (
-    <aside className="flex min-h-0 flex-col bg-bg-raised">
+    <aside className="flex min-h-0 flex-1 flex-col bg-bg-raised">
       <div className="flex border-b border-border">
         <button
           className={`flex-1 border-b-2 px-3 py-2.5 text-[13px] ${

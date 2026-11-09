@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { downloadPdf } from '../api/ipc';
@@ -21,6 +28,34 @@ interface ReaderViewProps {
 
 type LoadStatus = 'loading' | 'ready' | 'error';
 
+const AI_MIN_WIDTH = 300;
+const AI_DEFAULT_WIDTH = 380;
+const AI_MIN_PDF_WIDTH = 420;
+const AI_WIDTH_KEY = 'paperflow.reader.aiWidth.v1';
+
+function clampAiWidth(width: number): number {
+  const max = Math.max(AI_MIN_WIDTH, window.innerWidth - AI_MIN_PDF_WIDTH);
+  return Math.min(Math.max(width, AI_MIN_WIDTH), max);
+}
+
+function loadAiWidth(): number {
+  try {
+    const stored = Number(window.localStorage.getItem(AI_WIDTH_KEY));
+    if (Number.isFinite(stored) && stored > 0) return clampAiWidth(stored);
+  } catch {
+    // Storage may be unavailable; fall back to the default width.
+  }
+  return clampAiWidth(AI_DEFAULT_WIDTH);
+}
+
+function persistAiWidth(width: number): void {
+  try {
+    window.localStorage.setItem(AI_WIDTH_KEY, String(Math.round(width)));
+  } catch {
+    // Storage may be unavailable; the width still applies for this session.
+  }
+}
+
 export default function ReaderView({
   paper,
   summary,
@@ -38,6 +73,9 @@ export default function ReaderView({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectionText, setSelectionText] = useState('');
   const [reloadToken, setReloadToken] = useState(0);
+  const [aiWidth, setAiWidth] = useState(loadAiWidth);
+  const aiWidthRef = useRef(aiWidth);
+  const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   const pageTextCache = useRef(new Map<number, string>());
   const fullTextRef = useRef<string | null>(null);
@@ -161,6 +199,62 @@ export default function ReaderView({
     [doc],
   );
 
+  useEffect(() => {
+    const handleResize = () => {
+      const next = clampAiWidth(aiWidthRef.current);
+      aiWidthRef.current = next;
+      setAiWidth(next);
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const applyWidth = (width: number) => {
+    const next = clampAiWidth(width);
+    aiWidthRef.current = next;
+    setAiWidth(next);
+    return next;
+  };
+
+  const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    dragRef.current = { startX: event.clientX, startWidth: aiWidthRef.current };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const moveResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    applyWidth(drag.startWidth - (event.clientX - drag.startX));
+  };
+
+  const endResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    persistAiWidth(aiWidthRef.current);
+  };
+
+  const resetAiWidth = () => {
+    persistAiWidth(applyWidth(AI_DEFAULT_WIDTH));
+  };
+
+  const handleResizeKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const delta =
+      event.key === 'ArrowLeft' ? 16 : event.key === 'ArrowRight' ? -16 : 0;
+    if (delta === 0) return;
+
+    event.preventDefault();
+    persistAiWidth(applyWidth(aiWidthRef.current + delta));
+  };
+
   return (
     <div
       className="fixed inset-0 z-20 flex flex-col bg-bg"
@@ -186,8 +280,8 @@ export default function ReaderView({
         </button>
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(340px,420px)] max-[900px]:grid-cols-[minmax(0,1fr)_340px]">
-        <section className="flex min-h-0 min-w-0 flex-col border-r border-border">
+      <div className="flex min-h-0 flex-1">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col">
           {status === 'loading' && (
             <p className="px-4 py-6 text-[13px] text-fg-dim">
               正在下载并解析 PDF…
@@ -218,20 +312,45 @@ export default function ReaderView({
           )}
         </section>
 
-        <AiPanel
-          paper={paper}
-          summary={summary}
-          summaryStream={summaryStream}
-          summaryBusy={summaryBusy}
-          summaryError={summaryError}
-          onRetrySummary={onRetrySummary}
-          currentPage={page}
-          pdfReady={status === 'ready'}
-          selectionText={selectionText}
-          onClearSelection={clearSelection}
-          getPageText={getPageText}
-          getFullText={getFullText}
-        />
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整 AI 面板宽度（双击恢复默认）"
+          aria-valuemin={AI_MIN_WIDTH}
+          aria-valuemax={Math.max(AI_MIN_WIDTH, window.innerWidth - AI_MIN_PDF_WIDTH)}
+          aria-valuenow={Math.round(aiWidth)}
+          tabIndex={0}
+          className="group relative z-10 w-1.5 shrink-0 cursor-col-resize focus-visible:outline-none"
+          onPointerDown={startResize}
+          onPointerMove={moveResize}
+          onPointerUp={endResize}
+          onPointerCancel={endResize}
+          onLostPointerCapture={endResize}
+          onDoubleClick={resetAiWidth}
+          onKeyDown={handleResizeKey}
+        >
+          <div className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border transition-colors group-hover:bg-accent group-focus-visible:bg-accent" />
+        </div>
+
+        <div
+          style={{ width: `${aiWidth}px` }}
+          className="flex min-h-0 shrink-0 flex-col"
+        >
+          <AiPanel
+            paper={paper}
+            summary={summary}
+            summaryStream={summaryStream}
+            summaryBusy={summaryBusy}
+            summaryError={summaryError}
+            onRetrySummary={onRetrySummary}
+            currentPage={page}
+            pdfReady={status === 'ready'}
+            selectionText={selectionText}
+            onClearSelection={clearSelection}
+            getPageText={getPageText}
+            getFullText={getFullText}
+          />
+        </div>
       </div>
     </div>
   );
