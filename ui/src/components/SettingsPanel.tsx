@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import {
   fetchLlmModels,
@@ -35,7 +35,31 @@ const selectClass =
   'rounded-md border border-border bg-bg px-2 py-1 text-xs text-fg outline-none focus:border-accent';
 const ghostButtonClass =
   'rounded-md border border-border px-3 py-1 text-xs text-fg-dim hover:border-accent hover:text-accent disabled:opacity-45';
-const fieldClass = 'mb-3 block';
+const fieldClass = 'block';
+
+type SettingsPage = 'providers' | 'network';
+
+function SettingsCard({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-xl border border-border bg-bg p-4">
+      <h3 className="m-0 text-[13px] font-medium">{title}</h3>
+      {description && (
+        <p className="mb-3 mt-1 text-[11px] leading-relaxed text-fg-dim">
+          {description}
+        </p>
+      )}
+      <div className="flex flex-col gap-3">{children}</div>
+    </section>
+  );
+}
 const fieldLabelClass = 'mb-1 block text-xs text-fg-dim';
 
 interface ProbeState {
@@ -67,6 +91,7 @@ export default function SettingsPanel({
   const [settings, setSettings] = useState<LlmSettingsView | null>(null);
   const [catalog, setCatalog] = useState<ProviderProfileInfo[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [page, setPage] = useState<SettingsPage>('providers');
 
   const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({});
   const [clearKeys, setClearKeys] = useState<Record<string, boolean>>({});
@@ -95,6 +120,7 @@ export default function SettingsPanel({
     setBusy(true);
     setError(null);
     setSaved(false);
+    setPage('providers');
 
     Promise.all([getLlmSettings(), getLlmProviderCatalog()])
       .then(([loaded, providerCatalog]) => {
@@ -420,7 +446,7 @@ export default function SettingsPanel({
           <div>
             <h2 className="m-0 text-[17px]">设置</h2>
             <p className="mt-1 text-xs text-fg-dim">
-              配置多个模型服务商。API Key 保存后不再回显；留空表示保持不变。
+              模型服务、网络与检索源配置。
             </p>
           </div>
           <button
@@ -442,11 +468,13 @@ export default function SettingsPanel({
               <button
                 key={provider.id}
                 className={`flex w-full items-center gap-2.5 rounded-[9px] border px-2.5 py-2.5 text-left text-inherit transition-colors ${
-                  provider.id === selectedId
+                  page === 'providers' && provider.id === selectedId
                     ? 'border-accent bg-bg-hover'
-                    : 'border-transparent hover:bg-bg-hover'
-                }`}
-                onClick={() => setSelectedId(provider.id)}
+                    : 'border-transparent hover:bg-bg-hover'                }`}
+                onClick={() => {
+                  setSelectedId(provider.id);
+                  setPage('providers');
+                }}
               >
                 <span className="grid h-[30px] w-[30px] flex-none place-items-center rounded-lg border border-border bg-bg text-xs font-semibold text-accent">
                   {provider.name.trim().slice(0, 1) || '?'}
@@ -476,30 +504,105 @@ export default function SettingsPanel({
 
             <button
               className="mt-1.5 rounded-[9px] border border-dashed border-border px-2.5 py-2.5 text-left text-[12.5px] text-fg-dim hover:border-accent hover:text-accent"
-              onClick={addProvider}
+              onClick={() => {
+                addProvider();
+                setPage('providers');
+              }}
             >
               ＋ 新增服务商
             </button>
+
+            <div className="mt-2 border-t border-border pt-3">
+              <div className="px-2 pb-2 text-[11px] uppercase tracking-[0.6px] text-fg-dim">
+                其他
+              </div>
+              <button
+                className={`flex w-full items-center gap-2.5 rounded-[9px] border px-2.5 py-2.5 text-left text-inherit transition-colors ${
+                  page === 'network'
+                    ? 'border-accent bg-bg-hover'
+                    : 'border-transparent hover:bg-bg-hover'
+                }`}
+                onClick={() => setPage('network')}
+              >
+                <span className="grid h-[30px] w-[30px] flex-none place-items-center rounded-lg border border-border bg-bg text-xs text-accent">
+                  网
+                </span>
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="text-[13px] font-medium">网络</span>
+                  <span className="truncate text-[11px] text-fg-dim">
+                    {settings?.academic_direct ? '学术源直连' : '跟随系统代理'}
+                  </span>
+                </span>
+              </button>
+            </div>
           </aside>
 
           <section className="overflow-y-auto px-[22px] py-[18px]">
-            {!settings && !error && (
-              <p className="px-4 py-6 text-[13px] text-fg-dim">加载中…</p>
-            )}
-            {error && (
-              <div className="mb-3.5 rounded-lg border border-danger px-3.5 py-2.5 text-[13px] text-danger">
-                {error}
+            {page === 'network' ? (
+              <div className="flex flex-col gap-4">
+                <SettingsCard
+                  title="学术检索源"
+                  description="控制 arXiv 与 OpenAlex 请求是否绕过系统代理。"
+                >
+                  <label className="flex items-start justify-between gap-4">
+                    <span className="min-w-0">
+                      <span className="block text-[13px]">学术源直连</span>
+                      <span className="mt-0.5 block text-[11px] leading-relaxed text-fg-dim">
+                        arXiv / OpenAlex 绕过系统代理直连；模型请求与 PDF 下载仍走代理。
+                      </span>
+                    </span>
+                    <select
+                      className={`${selectClass} w-[130px] flex-none`}
+                      value={settings?.academic_direct ? 'direct' : 'system'}
+                      onChange={(event) =>
+                        void updateAcademicDirect(
+                          event.target.value === 'direct',
+                        )
+                      }
+                      disabled={!settings || networkBusy}
+                    >
+                      <option value="system">跟随系统代理</option>
+                      <option value="direct">直连</option>
+                    </select>
+                  </label>
+                  {networkError && (
+                    <p className="m-0 text-[11px] text-danger">{networkError}</p>
+                  )}
+                </SettingsCard>
+
+                <SettingsCard
+                  title="什么时候需要直连"
+                  description="仅影响学术检索源，不改变模型与 PDF 下载的网络路径。"
+                >
+                  <p className="m-0 text-[12px] leading-relaxed text-fg-dim">
+                    代理出口被 arXiv 或 OpenAlex 限流（HTTP 429）时可切换为直连；修改立即生效并写入
+                    settings.json。若你的网络必须依赖代理才能访问学术源，请保持「跟随系统代理」。
+                  </p>
+                </SettingsCard>
               </div>
-            )}
+            ) : (
+              <div className="flex flex-col gap-3">
+                {!settings && !error && (
+                  <p className="px-4 py-6 text-[13px] text-fg-dim">加载中…</p>
+                )}
+                {error && (
+                  <div className="rounded-lg border border-danger px-3.5 py-2.5 text-[13px] text-danger">
+                    {error}
+                  </div>
+                )}
 
-            {settings && !selected && (
-              <p className="px-4 py-6 text-[13px] text-fg-dim">
-                选择或新增一个服务商。
-              </p>
-            )}
+                {settings && !selected && (
+                  <p className="px-4 py-6 text-[13px] text-fg-dim">
+                    选择或新增一个服务商。
+                  </p>
+                )}
 
-            {settings && selected && (
-              <>
+                {settings && selected && (
+                  <div className="flex flex-col gap-4">
+                    <SettingsCard
+                      title="服务商"
+                      description="选择预设或自定义，名称仅用于本地区分。"
+                    >
                 <label className={fieldClass}>
                   <span className={fieldLabelClass}>Provider 预设</span>
                   <select
@@ -527,7 +630,12 @@ export default function SettingsPanel({
                     spellCheck={false}
                   />
                 </label>
+                    </SettingsCard>
 
+                    <SettingsCard
+                      title="连接"
+                      description="Base URL 指向 OpenAI 兼容端点；API Key 只写不读。"
+                    >
                 <label className={fieldClass}>
                   <span className={fieldLabelClass}>Base URL</span>
                   <input
@@ -573,7 +681,7 @@ export default function SettingsPanel({
                 </label>
 
                 {selected.has_api_key && (
-                  <div className="-mt-1 mb-3 flex flex-wrap items-center gap-2">
+                  <div className="-mt-1 flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       className="text-xs text-accent hover:underline"
@@ -590,7 +698,12 @@ export default function SettingsPanel({
                     )}
                   </div>
                 )}
+                    </SettingsCard>
 
+                    <SettingsCard
+                      title="模型"
+                      description="选择服务商提供的模型，或手动填写模型 ID。"
+                    >
                 <label className={fieldClass}>
                   <span className={fieldLabelClass}>模型</span>
                   <div className="flex flex-wrap gap-1.5">
@@ -637,7 +750,7 @@ export default function SettingsPanel({
                   </p>
                 )}
                 {modelErrors[selected.id] && (
-                  <div className="mb-3.5 rounded-lg border border-danger px-3.5 py-2.5 text-[13px] text-danger">
+                  <div className="rounded-lg border border-danger px-3.5 py-2.5 text-[13px] text-danger">
                     {modelErrors[selected.id]}
                   </div>
                 )}
@@ -650,16 +763,17 @@ export default function SettingsPanel({
                   </p>
                 )}
                 {probe?.status === 'error' && (
-                  <div className="mb-3.5 rounded-lg border border-danger px-3.5 py-2.5 text-[13px] text-danger">
+                  <div className="rounded-lg border border-danger px-3.5 py-2.5 text-[13px] text-danger">
                     {probe.error}
                   </div>
                 )}
+                    </SettingsCard>
 
-                <details className="mt-4 border-t border-border pt-2.5">
-                  <summary className="cursor-pointer text-xs text-fg-dim">
+                <details className="rounded-xl border border-border bg-bg p-4">
+                  <summary className="cursor-pointer text-[13px] font-medium">
                     高级兼容性
                   </summary>
-                  <div className="mt-2.5 grid gap-2">
+                  <div className="mt-3 grid gap-2">
                     <label className="flex items-center justify-between gap-3 text-xs text-fg-dim">
                       <span>JSON 模式</span>
                       <select
@@ -791,41 +905,20 @@ export default function SettingsPanel({
                     删除
                   </button>
                 </div>
-              </>
+                  </div>
+                )}
+              </div>
             )}
           </section>
         </div>
 
-        <section className="border-t border-border px-[22px] py-3">
-          <label className="flex items-center justify-between gap-4">
-            <span className="min-w-0">
-              <span className="block text-[13px] text-fg">学术源直连</span>
-              <span className="mt-0.5 block text-[11px] text-fg-dim">
-                arXiv / OpenAlex 绕过系统代理直连；模型请求与 PDF 下载仍走代理。代理出口被限流时开启。
-              </span>
-            </span>
-            <select
-              className={`${selectClass} w-[130px] flex-none`}
-              value={settings?.academic_direct ? 'direct' : 'system'}
-              onChange={(event) =>
-                void updateAcademicDirect(event.target.value === 'direct')
-              }
-              disabled={!settings || networkBusy}
-            >
-              <option value="system">跟随系统代理</option>
-              <option value="direct">直连</option>
-            </select>
-          </label>
-          {networkError && (
-            <p className="mt-1.5 text-[11px] text-danger">{networkError}</p>
-          )}
-        </section>
-
         <footer className="flex items-center justify-between gap-3 border-t border-border px-[22px] py-3">
           <span className="text-xs text-fg-dim">
-            {saved
-              ? '已保存'
-              : 'API key 保存在本机 credentials.json，不会写入日志。'}
+            {page === 'network'
+              ? '网络设置修改后立即生效。'
+              : saved
+                ? '已保存'
+                : 'API key 保存在本机 credentials.json，不会写入日志。'}
           </span>
           <div className="flex gap-2">
             <button
@@ -834,13 +927,15 @@ export default function SettingsPanel({
             >
               关闭
             </button>
-            <button
-              className="rounded-md border border-accent bg-accent px-4 py-[7px] text-white disabled:opacity-45"
-              onClick={() => void submit()}
-              disabled={busy || !settings || settings.providers.length === 0}
-            >
-              {busy ? '保存中' : '保存'}
-            </button>
+            {page === 'providers' && (
+              <button
+                className="rounded-md border border-accent bg-accent px-4 py-[7px] text-white disabled:opacity-45"
+                onClick={() => void submit()}
+                disabled={busy || !settings || settings.providers.length === 0}
+              >
+                {busy ? '保存中' : '保存'}
+              </button>
+            )}
           </div>
         </footer>
       </div>
