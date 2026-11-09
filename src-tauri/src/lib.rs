@@ -7,9 +7,7 @@ mod commands;
 mod credentials;
 mod settings;
 
-use paperflow_adapters::{
-    ArxivHttpClient, OpenAiCompatibleClient, OpenAlexHttpClient, PdfFetcher,
-};
+use paperflow_adapters::{ArxivHttpClient, OpenAiCompatibleClient, OpenAlexHttpClient, PdfFetcher};
 use paperflow_usecases::App;
 use settings::SettingsManager;
 use tauri::Manager;
@@ -36,10 +34,7 @@ pub fn run() {
             let arxiv = ArxivHttpClient::new().map_err(|e| e.to_string())?;
             let openalex = OpenAlexHttpClient::new().map_err(|e| e.to_string())?;
 
-            let config_dir = app
-                .path()
-                .app_config_dir()
-                .map_err(|e| e.to_string())?;
+            let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
             let settings = SettingsManager::load(config_dir);
 
             let pdf_cache_dir = app
@@ -48,8 +43,7 @@ pub fn run() {
                 .map_err(|e| e.to_string())?
                 .join("pdfs");
             let pdf = PdfFetcher::new(pdf_cache_dir).map_err(|e| e.to_string())?;
-            let llm = OpenAiCompatibleClient::new(settings.shared())
-                .map_err(|e| e.to_string())?;
+            let llm = OpenAiCompatibleClient::new(settings.shared()).map_err(|e| e.to_string())?;
 
             app.manage(AppState {
                 app: App::new(arxiv, llm, openalex),
@@ -72,6 +66,8 @@ pub fn run() {
             commands::test_llm_connection,
             commands::ask_paper,
             commands::ask_paper_stream,
+            commands::translate_text,
+            commands::translate_text_stream,
             commands::review_paper,
             commands::persona_chat_stream,
             commands::finalize_opinions,

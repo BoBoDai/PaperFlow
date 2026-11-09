@@ -6,15 +6,16 @@
 //! 错误一律转成 String 跨 IPC，且**不做任何降级** —— 失败就让前端知道，
 //! 不许返回空结果假装成功。
 
-use crate::settings::{LlmProbeInput, LlmSettingsInput, LlmSettingsView};
 use crate::AppState;
+use crate::settings::{LlmProbeInput, LlmSettingsInput, LlmSettingsView};
 use paperflow_adapters::{
-    provider_catalog, ConnectionTestResult, LlmEndpointError, LlmErrorKind, LlmModelList,
-    ProviderProfileInfo,
+    ConnectionTestResult, LlmEndpointError, LlmErrorKind, LlmModelList, ProviderProfileInfo,
+    provider_catalog,
 };
 use paperflow_core::{
     FeedPage, FinalizeRequest, OpinionBatch, Paper, PersonaAnswer, PersonaChatRequest, QaRequest,
-    QaResponse, ReviewRequest, ReviewResult, SearchResponse, Summary,
+    QaResponse, ReviewRequest, ReviewResult, SearchResponse, Summary, TranslateRequest,
+    Translation,
 };
 use tauri::State;
 
@@ -84,10 +85,7 @@ pub async fn summarize_paper_stream(
 
 /// 基于 PDF 上下文回答论文问题
 #[tauri::command]
-pub async fn ask_paper(
-    state: State<'_, AppState>,
-    request: QaRequest,
-) -> IpcResult<QaResponse> {
+pub async fn ask_paper(state: State<'_, AppState>, request: QaRequest) -> IpcResult<QaResponse> {
     state.app.ask_paper(request).await.map_err(to_ipc)
 }
 
@@ -109,7 +107,35 @@ pub async fn ask_paper_stream(
         .map_err(to_ipc)
 }
 
-/// 三脑评审：三个人格独立评审，返回结构化结果与聚合结论。
+/// Translate a text selection into Simplified Chinese.
+#[tauri::command]
+pub async fn translate_text(
+    state: State<'_, AppState>,
+    request: TranslateRequest,
+) -> IpcResult<Translation> {
+    state.app.translate_text(request).await.map_err(to_ipc)
+}
+
+/// Streaming translation: deltas via Channel, full result as return value.
+#[tauri::command]
+pub async fn translate_text_stream(
+    state: State<'_, AppState>,
+    request: TranslateRequest,
+    on_event: tauri::ipc::Channel<String>,
+) -> IpcResult<Translation> {
+    let channel = on_event.clone();
+
+    state
+        .app
+        .translate_text_stream(request, move |delta| {
+            let _ = channel.send(delta);
+        })
+        .await
+        .map_err(to_ipc)
+}
+
+/// Round-table review: three personas review independently and return
+/// structured results plus an aggregate verdict.
 #[tauri::command]
 pub async fn review_paper(
     state: State<'_, AppState>,
@@ -118,7 +144,7 @@ pub async fn review_paper(
     state.app.review_paper(request).await.map_err(to_ipc)
 }
 
-/// 三脑群聊：某个人格的流式回答。
+/// Round-table group chat: streaming answer from one persona.
 #[tauri::command]
 pub async fn persona_chat_stream(
     state: State<'_, AppState>,

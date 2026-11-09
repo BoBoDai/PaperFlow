@@ -179,6 +179,19 @@ export interface QaResponse {
   context_chars: number;
 }
 
+/** 对应 `paperflow_core::TranslateRequest` */
+export interface TranslateRequest {
+  text: string;
+}
+
+/** 对应 `paperflow_core::Translation` */
+export interface Translation {
+  text: string;
+  model: string;
+  prompt_version: string;
+  truncated: boolean;
+}
+
 export type PersonaId = 'rigor' | 'repro' | 'insight';
 export type Stance = 'support' | 'borderline' | 'oppose';
 export type ReviewContext = 'abstract' | 'full_text';

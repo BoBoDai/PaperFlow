@@ -5,7 +5,7 @@ use chrono::Utc;
 use paperflow_adapters::{LlmProvider, PaperSearch, ReviewProvider};
 use paperflow_core::{
     Answer, Error, OpinionRequest, Paper, PersonaAnswer, PersonaChatRequest, PersonaId,
-    PersonaOpinion, PersonaReview, QaRequest, Result, Source, Stance, Summary,
+    PersonaOpinion, PersonaReview, QaRequest, Result, Source, Stance, Summary, Translation,
 };
 
 use crate::App;
@@ -149,6 +149,9 @@ pub(super) struct FakeLlm {
     translation: String,
     fail_translation: bool,
     translate_calls: AtomicUsize,
+    text_translation: String,
+    fail_text_translation: bool,
+    text_translate_calls: AtomicUsize,
     configured: bool,
     answer: String,
     fail_answer: bool,
@@ -171,6 +174,9 @@ impl Default for FakeLlm {
             translation: String::new(),
             fail_translation: false,
             translate_calls: AtomicUsize::new(0),
+            text_translation: "译文".into(),
+            fail_text_translation: false,
+            text_translate_calls: AtomicUsize::new(0),
             configured: true,
             answer: "答案".into(),
             fail_answer: false,
@@ -227,6 +233,17 @@ impl FakeLlm {
 
     pub(super) fn translate_calls(&self) -> usize {
         self.translate_calls.load(Ordering::SeqCst)
+    }
+
+    pub(super) fn failing_text_translation() -> Self {
+        Self {
+            fail_text_translation: true,
+            ..Self::default()
+        }
+    }
+
+    pub(super) fn text_translate_calls(&self) -> usize {
+        self.text_translate_calls.load(Ordering::SeqCst)
     }
 
     pub(super) fn answer_calls(&self) -> usize {
@@ -410,6 +427,31 @@ impl LlmProvider for FakeLlm {
         let answer = self.ask_paper(request).await?;
         on_delta(answer.answer.clone());
         Ok(answer)
+    }
+
+    async fn translate_text(&self, _text: &str) -> Result<Translation> {
+        self.text_translate_calls.fetch_add(1, Ordering::SeqCst);
+
+        if self.fail_text_translation {
+            return Err(Error::Llm("translation failed".into()));
+        }
+
+        Ok(Translation {
+            text: self.text_translation.clone(),
+            model: "fake".into(),
+            prompt_version: Translation::PROMPT_VERSION.into(),
+            truncated: false,
+        })
+    }
+
+    async fn translate_text_stream(
+        &self,
+        text: &str,
+        on_delta: &mut (dyn FnMut(String) + Send),
+    ) -> Result<Translation> {
+        let translation = self.translate_text(text).await?;
+        on_delta(translation.text.clone());
+        Ok(translation)
     }
 }
 

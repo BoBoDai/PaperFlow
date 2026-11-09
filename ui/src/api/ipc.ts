@@ -25,6 +25,8 @@ import type {
   ReviewResult,
   SearchResponse,
   Summary,
+  TranslateRequest,
+  Translation,
 } from '../types';
 
 /** 在普通浏览器里跑（没经过 Tauri）时，invoke 会抛错 */
@@ -106,6 +108,25 @@ export async function askPaperStream(
   channel.onmessage = onDelta;
 
   return invoke<QaResponse>('ask_paper_stream', { request, onEvent: channel });
+}
+
+export async function translateText(
+  request: TranslateRequest,
+): Promise<Translation> {
+  return invoke<Translation>('translate_text', { request });
+}
+
+export async function translateTextStream(
+  request: TranslateRequest,
+  onDelta: (delta: string) => void,
+): Promise<Translation> {
+  const channel = new Channel<string>();
+  channel.onmessage = onDelta;
+
+  return invoke<Translation>('translate_text_stream', {
+    request,
+    onEvent: channel,
+  });
 }
 
 export async function reviewPaper(

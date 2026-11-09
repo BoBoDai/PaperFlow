@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { askPaperStream } from '../api/ipc';
+import { askPaperStream, translateTextStream } from '../api/ipc';
 import { ipcErrorMessage } from '../lib/ipcError';
-import type { Paper, QaScope, QaTurn, Summary } from '../types';
+import type { Paper, QaScope, QaTurn, Summary, Translation } from '../types';
 
 interface AiPanelProps {
   paper: Paper;
@@ -35,6 +35,9 @@ interface ChatMessage {
   contextChars?: number;
   model?: string;
   streaming?: boolean;
+  kind?: 'qa' | 'translation';
+  source?: string;
+  truncated?: boolean;
 }
 
 let messageSequence = 0;
@@ -65,12 +68,15 @@ export default function AiPanel({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
+  const [translationBusy, setTranslationBusy] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [extracting, setExtracting] = useState<{
     done: number;
     total: number;
   } | null>(null);
 
   const requestIdRef = useRef(0);
+  const translationCache = useRef(new Map<string, Translation>());
   const endRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -82,7 +88,7 @@ export default function AiPanel({
   }, [messages]);
 
   const send = async (raw: string, mode: 'typed' | 'selection') => {
-    if (busy) return;
+    if (busy || translationBusy) return;
 
     const question =
       mode === 'selection'
@@ -92,7 +98,12 @@ export default function AiPanel({
 
     const requestId = ++requestIdRef.current;
     const history: QaTurn[] = messages
-      .filter((message) => !message.error && !message.streaming)
+      .filter(
+        (message) =>
+          message.kind !== 'translation' &&
+          !message.error &&
+          !message.streaming,
+      )
       .slice(-6)
       .map(({ role, content }) => ({ role, content }));
 
@@ -217,6 +228,89 @@ export default function AiPanel({
     }
   };
 
+  const translateSelection = async () => {
+    const text = selectionText.trim();
+    if (!text || busy || translationBusy) return;
+
+    const id = messageId();
+    const cached = translationCache.current.get(text);
+
+    setTab('chat');
+    setTranslationBusy(true);
+    setMessages((current) => [
+      ...current,
+      {
+        id,
+        role: 'assistant',
+        content: cached?.text ?? '',
+        scope: 'selection',
+        page: currentPage,
+        kind: 'translation',
+        source: text,
+        model: cached?.model,
+        truncated: cached?.truncated,
+        streaming: !cached,
+      },
+    ]);
+
+    if (cached) {
+      setTranslationBusy(false);
+      return;
+    }
+
+    try {
+      const translation = await translateTextStream({ text }, (delta) => {
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === id
+              ? { ...message, content: message.content + delta }
+              : message,
+          ),
+        );
+      });
+
+      translationCache.current.set(text, translation);
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === id
+            ? {
+                ...message,
+                content: translation.text,
+                model: translation.model,
+                truncated: translation.truncated,
+                streaming: false,
+              }
+            : message,
+        ),
+      );
+    } catch (error: unknown) {
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === id
+            ? {
+                ...message,
+                content: ipcErrorMessage(error),
+                error: true,
+                streaming: false,
+              }
+            : message,
+        ),
+      );
+    } finally {
+      setTranslationBusy(false);
+    }
+  };
+
+  const copyTranslation = async (message: ChatMessage) => {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setCopiedId(message.id);
+      window.setTimeout(() => setCopiedId(null), 1500);
+    } catch {
+      // Clipboard access can be denied; the text stays selectable.
+    }
+  };
+
   return (
     <aside className="flex min-h-0 flex-col bg-bg-raised">
       <div className="flex border-b border-border">
@@ -318,41 +412,90 @@ export default function AiPanel({
             <div className="flex flex-col gap-2.5">
               {messages.length === 0 && (
                 <p className="px-4 py-6 text-[13px] text-fg-dim">
-                  基于 PDF 内容提问。选中文字后可以让 AI 解释。
+                  基于 PDF 内容提问。选中文字后可以让 AI 解释或翻译。
                 </p>
               )}
 
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`max-w-[92%] whitespace-pre-wrap break-words rounded-[10px] border px-2.5 py-2 text-[13px] leading-relaxed select-text ${
-                    message.role === 'user'
-                      ? 'self-end bg-bg-hover'
-                      : 'self-start bg-bg'
-                  } ${message.error ? 'border-danger text-danger' : 'border-border'}`}
-                >
-                  {message.display ?? message.content}
-                  {message.streaming && !message.content && (
-                    <span className="text-fg-dim">思考中…</span>
-                  )}
-                  {message.streaming && message.content && (
-                    <span className="animate-[chat-blink_1s_steps(1)_infinite] text-accent">
-                      ▍
-                    </span>
-                  )}
-                  {message.contextTruncated && (
-                    <div className="mt-1.5 text-[11px] text-fg-dim">
-                      上下文较长，已省略中间部分（发送 {message.contextChars}{' '}
-                      字符）
+              {messages.map((message) =>
+                message.kind === 'translation' ? (
+                  <div
+                    key={message.id}
+                    className={`max-w-[92%] self-start rounded-[10px] border px-2.5 py-2 text-[13px] leading-relaxed ${
+                      message.error
+                        ? 'border-danger text-danger'
+                        : 'border-border bg-bg'
+                    }`}
+                  >
+                    <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] text-fg-dim">
+                      <span>译文</span>
+                      <div className="flex items-center gap-2">
+                        {message.truncated && (
+                          <span>原文过长，已截断</span>
+                        )}
+                        {!message.streaming && !message.error && (
+                          <button
+                            className="rounded border border-border px-1.5 py-0.5 text-[10px] text-fg-dim hover:border-accent hover:text-accent"
+                            onClick={() => void copyTranslation(message)}
+                          >
+                            {copiedId === message.id ? '已复制' : '复制'}
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  )}
-                  {message.model && (
-                    <div className="mt-1.5 text-[11px] text-fg-dim">
-                      模型 {message.model}
+                    {message.source && (
+                      <div className="mb-1.5 line-clamp-2 text-[11px] text-fg-dim">
+                        {message.source}
+                      </div>
+                    )}
+                    <div className="whitespace-pre-wrap break-words select-text">
+                      {message.content}
+                      {message.streaming && !message.content && (
+                        <span className="text-fg-dim">翻译中…</span>
+                      )}
+                      {message.streaming && message.content && (
+                        <span className="animate-[chat-blink_1s_steps(1)_infinite] text-accent">
+                          ▍
+                        </span>
+                      )}
                     </div>
-                  )}
-                </div>
-              ))}
+                    {message.model && (
+                      <div className="mt-1.5 text-[11px] text-fg-dim">
+                        模型 {message.model}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div
+                    key={message.id}
+                    className={`max-w-[92%] whitespace-pre-wrap break-words rounded-[10px] border px-2.5 py-2 text-[13px] leading-relaxed select-text ${
+                      message.role === 'user'
+                        ? 'self-end bg-bg-hover'
+                        : 'self-start bg-bg'
+                    } ${message.error ? 'border-danger text-danger' : 'border-border'}`}
+                  >
+                    {message.display ?? message.content}
+                    {message.streaming && !message.content && (
+                      <span className="text-fg-dim">思考中…</span>
+                    )}
+                    {message.streaming && message.content && (
+                      <span className="animate-[chat-blink_1s_steps(1)_infinite] text-accent">
+                        ▍
+                      </span>
+                    )}
+                    {message.contextTruncated && (
+                      <div className="mt-1.5 text-[11px] text-fg-dim">
+                        上下文较长，已省略中间部分（发送 {message.contextChars}{' '}
+                        字符）
+                      </div>
+                    )}
+                    {message.model && (
+                      <div className="mt-1.5 text-[11px] text-fg-dim">
+                        模型 {message.model}
+                      </div>
+                    )}
+                  </div>
+                ),
+              )}
               <div ref={endRef} />
             </div>
           </div>
@@ -363,13 +506,24 @@ export default function AiPanel({
                 <span className="truncate">
                   已选中 {selectionText.length} 字符
                 </span>
-                <button
-                  className="rounded-md border border-border px-3 py-1 text-xs text-fg-dim hover:border-accent hover:text-accent disabled:opacity-45"
-                  disabled={busy || !pdfReady}
-                  onClick={() => void send('', 'selection')}
-                >
-                  解释选中内容
-                </button>
+                <div className="flex shrink-0 gap-1.5">
+                  <button
+                    className="rounded-md border border-border px-3 py-1 text-xs text-fg-dim hover:border-accent hover:text-accent disabled:opacity-45"
+                    disabled={
+                      busy || translationBusy || !selectionText.trim()
+                    }
+                    onClick={() => void translateSelection()}
+                  >
+                    {translationBusy ? '翻译中…' : '翻译'}
+                  </button>
+                  <button
+                    className="rounded-md border border-border px-3 py-1 text-xs text-fg-dim hover:border-accent hover:text-accent disabled:opacity-45"
+                    disabled={busy || translationBusy || !pdfReady}
+                    onClick={() => void send('', 'selection')}
+                  >
+                    解释选中内容
+                  </button>
+                </div>
               </div>
             )}
 
@@ -400,7 +554,7 @@ export default function AiPanel({
                     : '基于全文提问…（Enter 发送）'
                   : 'PDF 加载中，问答暂不可用'
               }
-              disabled={!pdfReady || busy}
+              disabled={!pdfReady || busy || translationBusy}
               maxLength={2000}
             />
 
@@ -410,7 +564,7 @@ export default function AiPanel({
               </span>
               <button
                 className="rounded-md border border-accent bg-accent px-4 py-[7px] text-[12.5px] text-white disabled:opacity-45"
-                disabled={!pdfReady || busy || !draft.trim()}
+                disabled={!pdfReady || busy || translationBusy || !draft.trim()}
                 onClick={() => void send(draft, 'typed')}
               >
                 {busy ? '回答中…' : '发送'}

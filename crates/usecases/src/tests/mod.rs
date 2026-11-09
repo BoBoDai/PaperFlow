@@ -5,3 +5,4 @@ mod qa;
 mod review;
 mod search;
 mod support;
+mod translate;

@@ -704,7 +704,7 @@ export default function App() {
                         setReviewPaper(selected);
                       }}
                     >
-                      三脑评审
+                      圆桌评审
                     </button>
                   </div>
                   {!selected.pdf_url && (

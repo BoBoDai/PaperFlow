@@ -6,10 +6,9 @@ use std::time::{Duration, Instant};
 use futures_util::StreamExt;
 use paperflow_core::{
     Answer, Error, OpinionRequest, Paper, PersonaAnswer, PersonaChatRequest, PersonaId,
-    PersonaOpinion, PersonaReview, QaRequest, Result, Summary,
+    PersonaOpinion, PersonaReview, QaRequest, Result, Summary, Translation,
 };
 
-use super::{LlmProvider, ReviewProvider};
 use super::config::{LlmConfig, normalize_base_url};
 use super::error::{
     ConnectionTestResult, LlmEndpointError, LlmErrorKind, LlmModelList, map_http_error,
@@ -17,14 +16,15 @@ use super::error::{
 };
 use super::parsing::{
     parse_answer, parse_chat_content, parse_keywords, parse_models_response, parse_persona_answer,
-    parse_persona_opinion, parse_persona_review, parse_summary_text,
+    parse_persona_opinion, parse_persona_review, parse_summary_text, parse_translation,
 };
 use super::profiles::{ThinkingFormat, ThinkingMode};
 use super::prompts::{
     KEYWORDS_SYSTEM_PROMPT, build_qa_messages, persona_chat_messages, persona_opinion_messages,
-    persona_review_messages, summary_messages,
+    persona_review_messages, summary_messages, translate_messages,
 };
 use super::streaming::{AnswerStream, StreamChunk, next_sse_event};
+use super::{LlmProvider, ReviewProvider};
 
 pub struct OpenAiCompatibleClient {
     http: reqwest::Client,
@@ -66,14 +66,7 @@ impl OpenAiCompatibleClient {
             return Err(Error::Config("LLM 模型名不能为空".into()));
         }
 
-        let body = build_chat_body(
-            config,
-            messages,
-            max_tokens,
-            json_mode,
-            false,
-            temperature,
-        );
+        let body = build_chat_body(config, messages, max_tokens, json_mode, false, temperature);
 
         let response = self
             .http
@@ -320,7 +313,7 @@ impl LlmProvider for OpenAiCompatibleClient {
             .chat(
                 &config,
                 summary_messages(paper),
-                4096,
+                8192,
                 Duration::from_secs(120),
                 false,
                 0.2,
@@ -342,7 +335,7 @@ impl LlmProvider for OpenAiCompatibleClient {
             .stream_chat(
                 &config,
                 summary_messages(paper),
-                4096,
+                8192,
                 Duration::from_secs(300),
                 on_delta,
                 0.2,
@@ -362,7 +355,7 @@ impl LlmProvider for OpenAiCompatibleClient {
         ];
 
         let content = self
-            .chat(&config, messages, 512, Duration::from_secs(45), true, 0.2)
+            .chat(&config, messages, 1_024, Duration::from_secs(45), true, 0.2)
             .await?;
 
         parse_keywords(&content)
@@ -382,7 +375,7 @@ impl LlmProvider for OpenAiCompatibleClient {
             .chat(
                 &config,
                 messages,
-                4096,
+                8192,
                 Duration::from_secs(180),
                 false,
                 0.2,
@@ -409,7 +402,7 @@ impl LlmProvider for OpenAiCompatibleClient {
             .stream_chat(
                 &config,
                 build_qa_messages(request),
-                4096,
+                8192,
                 Duration::from_secs(300),
                 on_delta,
                 0.2,
@@ -417,6 +410,54 @@ impl LlmProvider for OpenAiCompatibleClient {
             .await?;
 
         parse_answer(&content, config.model.trim())
+    }
+
+    async fn translate_text(&self, text: &str) -> Result<Translation> {
+        let config = self.current_config()?;
+        tracing::info!(
+            chars = text.chars().count(),
+            model = %config.model,
+            "translating text"
+        );
+
+        let content = self
+            .chat(
+                &config,
+                translate_messages(text),
+                8192,
+                Duration::from_secs(180),
+                false,
+                0.2,
+            )
+            .await?;
+
+        parse_translation(&content, config.model.trim())
+    }
+
+    async fn translate_text_stream(
+        &self,
+        text: &str,
+        on_delta: &mut (dyn FnMut(String) + Send),
+    ) -> Result<Translation> {
+        let config = self.current_config()?;
+        tracing::info!(
+            chars = text.chars().count(),
+            model = %config.model,
+            "streaming translation"
+        );
+
+        let content = self
+            .stream_chat(
+                &config,
+                translate_messages(text),
+                8192,
+                Duration::from_secs(300),
+                on_delta,
+                0.2,
+            )
+            .await?;
+
+        parse_translation(&content, config.model.trim())
     }
 }
 
@@ -439,7 +480,7 @@ impl ReviewProvider for OpenAiCompatibleClient {
             .chat(
                 &config,
                 persona_review_messages(paper, persona, context),
-                2048,
+                16_384,
                 Duration::from_secs(180),
                 true,
                 persona.temperature(),
@@ -466,7 +507,7 @@ impl ReviewProvider for OpenAiCompatibleClient {
             .stream_chat(
                 &config,
                 persona_chat_messages(request),
-                2048,
+                4096,
                 Duration::from_secs(300),
                 on_delta,
                 0.6,
@@ -489,7 +530,7 @@ impl ReviewProvider for OpenAiCompatibleClient {
             .chat(
                 &config,
                 persona_opinion_messages(request),
-                512,
+                2_048,
                 Duration::from_secs(90),
                 true,
                 0.2,
@@ -517,6 +558,7 @@ pub(crate) fn build_chat_body(
         "stream": stream,
     });
 
+    let max_tokens = max_tokens.min(config.provider.max_output_tokens());
     body[capabilities.max_tokens_field.as_str()] = serde_json::json!(max_tokens);
 
     if json_mode && capabilities.json_mode {

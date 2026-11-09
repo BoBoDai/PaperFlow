@@ -45,6 +45,20 @@ Preserve well-known acronyms such as LLM, RAG, GAN, and Transformer.
 Reply with JSON only, exactly in this shape: {"keywords": "3-8 English keywords separated by spaces"}
 Do not include Chinese characters, quotes, explanations, or markdown fences."#;
 
+const TRANSLATE_SYSTEM_PROMPT: &str = r#"You are a professional academic translator.
+Translate the user's text into Simplified Chinese.
+Keep technical terms, model names, dataset names, and acronyms accurate; keep the English term in parentheses on first occurrence when it aids clarity.
+Preserve formulas, numbers, citations, and paragraph breaks.
+If the text is already Simplified Chinese, return it unchanged.
+Output only the translation. Do not explain, summarize, or add markdown fences."#;
+
+pub(crate) fn translate_messages(text: &str) -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!({ "role": "system", "content": TRANSLATE_SYSTEM_PROMPT }),
+        serde_json::json!({ "role": "user", "content": text }),
+    ]
+}
+
 const QA_SYSTEM_PROMPT: &str = r#"You are a reading assistant embedded in an academic paper reader.
 Answer strictly in Simplified Chinese.
 Use only the paper metadata and context supplied in the final user message. If the context does not contain the answer, say "根据当前上下文无法回答" and suggest changing the scope (当前页 / 全文) or asking a narrower question. Never invent facts, citations, or numbers.
@@ -136,7 +150,10 @@ pub(crate) fn persona_chat_messages(request: &PersonaChatRequest) -> Vec<serde_j
     user.push_str(&format!("\n\nContext:\n{}", request.context));
 
     if let Some(review) = &request.own_review {
-        user.push_str(&format!("\n\nYour earlier review of this paper:\n{}", own_review_block(review)));
+        user.push_str(&format!(
+            "\n\nYour earlier review of this paper:\n{}",
+            own_review_block(review)
+        ));
     }
 
     let other_reviews = other_panel_reviews(request.persona, &request.panel_reviews);
@@ -172,7 +189,10 @@ pub(crate) fn persona_opinion_messages(request: &OpinionRequest) -> Vec<serde_js
     user.push_str(&format!("\n\nContext:\n{}", request.context));
 
     if let Some(review) = &request.own_review {
-        user.push_str(&format!("\n\nYour earlier review of this paper:\n{}", own_review_block(review)));
+        user.push_str(&format!(
+            "\n\nYour earlier review of this paper:\n{}",
+            own_review_block(review)
+        ));
     }
 
     let other_reviews = other_panel_reviews(request.persona, &request.panel_reviews);
@@ -253,10 +273,7 @@ fn transcript_block(turns: &[MagiTurn]) -> String {
         .join("\n")
 }
 
-fn other_panel_reviews(
-    persona: PersonaId,
-    reviews: &[PersonaReview],
-) -> Vec<PersonaReview> {
+fn other_panel_reviews(persona: PersonaId, reviews: &[PersonaReview]) -> Vec<PersonaReview> {
     reviews
         .iter()
         .filter(|review| review.persona != persona)

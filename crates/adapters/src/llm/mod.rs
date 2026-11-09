@@ -17,7 +17,7 @@ mod tests;
 
 use paperflow_core::{
     Answer, OpinionRequest, Paper, PersonaAnswer, PersonaChatRequest, PersonaId, PersonaOpinion,
-    PersonaReview, QaRequest, Result, Summary,
+    PersonaReview, QaRequest, Result, Summary, Translation,
 };
 
 pub use client::OpenAiCompatibleClient;
@@ -36,7 +36,8 @@ pub(crate) use error::map_http_error;
 #[cfg(test)]
 pub(crate) use parsing::{
     parse_answer, parse_chat_content, parse_keywords, parse_models_response, parse_persona_answer,
-    parse_persona_opinion, parse_persona_review, parse_summary_text, strip_think_block,
+    parse_persona_opinion, parse_persona_review, parse_summary_text, parse_translation,
+    strip_think_block,
 };
 #[cfg(test)]
 pub(crate) use prompts::build_qa_messages;
@@ -63,6 +64,13 @@ pub trait LlmProvider {
         request: &QaRequest,
         on_delta: &mut (dyn FnMut(String) + Send),
     ) -> Result<Answer>;
+
+    async fn translate_text(&self, text: &str) -> Result<Translation>;
+    async fn translate_text_stream(
+        &self,
+        text: &str,
+        on_delta: &mut (dyn FnMut(String) + Send),
+    ) -> Result<Translation>;
 }
 
 /// Three-brain review and group-chat operations.

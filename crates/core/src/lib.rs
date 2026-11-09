@@ -16,6 +16,7 @@ pub mod paper;
 pub mod qa;
 pub mod review;
 pub mod summary;
+pub mod translate;
 
 pub use error::{Error, Result};
 pub use paper::{FeedPage, Paper, SearchResponse, Source};
@@ -26,6 +27,7 @@ pub use review::{
     ReviewContext, ReviewRequest, ReviewResult, ReviewVerdict, Stance,
 };
 pub use summary::Summary;
+pub use translate::{TranslateRequest, Translation};
 
 /// True for Han characters in the CJK ranges we translate.
 fn is_cjk_char(c: char) -> bool {

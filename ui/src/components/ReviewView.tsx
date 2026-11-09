@@ -459,14 +459,14 @@ export default function ReviewView({ paper, onClose }: ReviewViewProps) {
       className="fixed inset-0 z-20 flex flex-col bg-term-bg font-mono text-term-fg"
       role="dialog"
       aria-modal="true"
-      aria-label="三脑评审"
+      aria-label="圆桌评审"
     >
       <div className="magi-scanlines pointer-events-none fixed inset-0 z-30" />
 
       <header className="relative z-10 flex items-center gap-3 border-b border-term-grid px-4 py-2.5">
         <div className="min-w-0 flex-1">
           <div className="text-[9.5px] uppercase tracking-[0.26em] text-term-dim">
-            PaperFlow // Three-Brain Review
+            PaperFlow // Round-Table Review
           </div>
           <div className="truncate text-sm">{paper.title}</div>
         </div>
@@ -482,7 +482,7 @@ export default function ReviewView({ paper, onClose }: ReviewViewProps) {
         <button
           className="px-2 py-1 text-base text-term-dim hover:text-term-fg"
           onClick={onClose}
-          aria-label="关闭三脑评审"
+          aria-label="关闭圆桌评审"
         >
           ✕
         </button>
@@ -759,7 +759,7 @@ export default function ReviewView({ paper, onClose }: ReviewViewProps) {
               }}
               placeholder={
                 contextText
-                  ? '问三脑…（SHIFT+ENTER 换行）'
+                  ? '问评审团…（SHIFT+ENTER 换行）'
                   : '没有可用的论文上下文'
               }
               disabled={!contextText || chatBusy || reviewBusy}

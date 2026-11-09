@@ -21,6 +21,7 @@ mod magi;
 mod qa;
 mod review;
 mod search;
+mod translate;
 
 #[cfg(test)]
 mod tests;
@@ -41,6 +42,9 @@ pub const QA_SELECTION_BUDGET: usize = 8_000;
 pub const QA_QUESTION_BUDGET: usize = 2_000;
 pub const QA_HISTORY_TURNS: usize = 6;
 pub const QA_HISTORY_BUDGET: usize = 12_000;
+
+/// Character budget for a single translation request.
+pub const TRANSLATE_TEXT_BUDGET: usize = 8_000;
 
 /// Character budget for the shared three-brain group-chat transcript.
 pub const MAGI_TRANSCRIPT_BUDGET: usize = 12_000;

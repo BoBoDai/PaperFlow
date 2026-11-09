@@ -1,5 +1,5 @@
 use super::*;
-use paperflow_core::{Error, PersonaId, QaRole, QaScope, QaTurn, Stance};
+use paperflow_core::{Error, PersonaId, QaRole, QaScope, QaTurn, Stance, Translation};
 
 fn config(provider: ProviderProfileId) -> LlmConfig {
     let defaults = provider.defaults();
@@ -85,6 +85,48 @@ fn build_body_uses_profile_capabilities() {
     minimax_disabled.compat.thinking_mode = Some(ThinkingMode::Disabled);
     let body = build_chat_body(&minimax_disabled, vec![], 10, true, false, 0.2);
     assert_eq!(body["thinking"]["type"], "disabled");
+}
+
+#[test]
+fn parses_translation_and_strips_thinking() {
+    let translation = parse_translation("<think>plan</think>\n\n扩散模型", "test-model")
+        .expect("valid translation");
+
+    assert_eq!(translation.text, "扩散模型");
+    assert_eq!(translation.model, "test-model");
+    assert_eq!(translation.prompt_version, Translation::PROMPT_VERSION);
+    assert!(!translation.truncated);
+}
+
+#[test]
+fn rejects_translation_with_only_thinking() {
+    let error = parse_translation("<think>plan</think>", "test-model")
+        .expect_err("empty translation should fail");
+
+    assert!(matches!(error, Error::InvalidLlmOutput(_)));
+}
+
+#[test]
+fn completion_budget_is_clamped_to_profile_cap() {
+    let deepseek = build_chat_body(
+        &config(ProviderProfileId::DeepSeek),
+        vec![],
+        32_768,
+        false,
+        false,
+        0.2,
+    );
+    assert_eq!(deepseek["max_tokens"].as_u64(), Some(8_192));
+
+    let minimax = build_chat_body(
+        &config(ProviderProfileId::MiniMax),
+        vec![],
+        32_768,
+        false,
+        false,
+        0.2,
+    );
+    assert_eq!(minimax["max_completion_tokens"].as_u64(), Some(32_768));
 }
 
 #[test]

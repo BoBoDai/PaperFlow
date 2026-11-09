@@ -2,7 +2,7 @@
 
 use paperflow_core::{
     Answer, Error, PersonaAnswer, PersonaId, PersonaOpinion, PersonaReview, Result, Stance,
-    Summary, contains_cjk,
+    Summary, Translation, contains_cjk,
 };
 use serde::Deserialize;
 
@@ -18,6 +18,20 @@ pub(crate) fn parse_answer(content: &str, model: &str) -> Result<Answer> {
         answer,
         model: model.to_string(),
         prompt_version: Answer::PROMPT_VERSION.into(),
+    })
+}
+
+pub(crate) fn parse_translation(content: &str, model: &str) -> Result<Translation> {
+    let text = strip_think_block(content).trim().to_string();
+    if text.is_empty() {
+        return Err(Error::InvalidLlmOutput("translation is empty".into()));
+    }
+
+    Ok(Translation {
+        text,
+        model: model.to_string(),
+        prompt_version: Translation::PROMPT_VERSION.into(),
+        truncated: false,
     })
 }
 
@@ -303,8 +317,8 @@ pub(crate) fn parse_persona_review(
     persona: PersonaId,
     model: &str,
 ) -> Result<PersonaReview> {
-    let payload: PersonaReviewPayload =
-        serde_json::from_str(extract_json_payload(content)?).map_err(|e| {
+    let payload: PersonaReviewPayload = serde_json::from_str(extract_json_payload(content)?)
+        .map_err(|e| {
             Error::InvalidLlmOutput(format!("review JSON does not match the schema: {e}"))
         })?;
 
@@ -341,12 +355,9 @@ struct PersonaOpinionPayload {
     reason: String,
 }
 
-pub(crate) fn parse_persona_opinion(
-    content: &str,
-    persona: PersonaId,
-) -> Result<PersonaOpinion> {
-    let payload: PersonaOpinionPayload =
-        serde_json::from_str(extract_json_payload(content)?).map_err(|e| {
+pub(crate) fn parse_persona_opinion(content: &str, persona: PersonaId) -> Result<PersonaOpinion> {
+    let payload: PersonaOpinionPayload = serde_json::from_str(extract_json_payload(content)?)
+        .map_err(|e| {
             Error::InvalidLlmOutput(format!("opinion JSON does not match the schema: {e}"))
         })?;
 

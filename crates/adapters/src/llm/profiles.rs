@@ -57,6 +57,21 @@ impl ProviderProfileId {
         }
     }
 
+    /// Upper bound for the completion token field. Reasoning tokens count
+    /// toward this budget on providers that always think, so calls that need
+    /// long output must stay within the provider's cap.
+    pub const fn max_output_tokens(self) -> u32 {
+        match self {
+            // deepseek-chat caps max_tokens at 8K.
+            Self::DeepSeek => 8_192,
+            // gpt-4o-mini caps max_completion_tokens at 16K.
+            Self::OpenAi => 16_384,
+            // M3.1 defaults to 32K and accepts up to 512K.
+            Self::MiniMax => 32_768,
+            Self::Custom => 8_192,
+        }
+    }
+
     pub const fn capabilities(self) -> EffectiveCapabilities {
         match self {
             Self::DeepSeek => EffectiveCapabilities {
