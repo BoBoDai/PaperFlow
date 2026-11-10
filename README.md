@@ -1,5 +1,7 @@
 # PaperFlow
 
+[English](README.en.md) | 简体中文
+
 学术论文检索与分析桌面应用：arXiv / OpenAlex 检索、兴趣信息流、中文查询转英文关键词、LLM 摘要、内置 PDF 阅读器与 AI 问答。
 
 ![PaperFlow 推荐信息流](docs/screenshots/feed.png)
@@ -168,10 +170,3 @@ API Key 单独保存在 `credentials.json`，不会进入仓库，也不会写�
 - [x] 兴趣推荐流
 - [x] 内置 PDF 阅读器 + AI 辅助阅读
 - [x] 学术源直连开关
-
-尚未实现：
-
-- [ ] `adapters/storage.rs` —— 只有 trait，没有 SQLite 实现
-- [ ] 后台调度器（定时抓取 + 通知）
-- [ ] `ui/src/types.ts` 是手写的 Rust 类型镜像，应该用 ts-rs 生成
-- [ ] Windows / Linux 各自验证一次 WebView 渲染差异
